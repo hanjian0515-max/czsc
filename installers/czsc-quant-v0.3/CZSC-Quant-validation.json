@@ -1,0 +1,27 @@
+{
+  "product": "CZSC visual and automated paper/replay platform",
+  "version": "0.3",
+  "test_cases_passed": 190,
+  "windows_runtime_verified": false,
+  "live_market_connection_verified": false,
+  "real_broker_orders_enabled": false,
+  "markets": [
+    "ashare",
+    "BTC-USD"
+  ],
+  "modes": [
+    "replay",
+    "paper"
+  ],
+  "note": "Tests use synthetic data/mock network and real CZSC engine; not profit evidence.",
+  "artifacts": {
+    "CZSC-Quant-Setup.exe": {
+      "bytes": 658493,
+      "sha256": "0057a3caaf23f8af64d0459f3c380a3c8cd68da1f35cf8ebed7d160afad63d41"
+    },
+    "CZSC-Quant-v0.3.zip": {
+      "bytes": 459813,
+      "sha256": "6bff8927ec8d01aa82c3273d09185eb792c384877573c8fcd51b0feacc86f858"
+    }
+  }
+}
