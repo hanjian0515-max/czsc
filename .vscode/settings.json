@@ -1,5 +1,5 @@
 {
-    "python.defaultInterpreterPath": ".venv/Scripts/python.exe",
+    "python.defaultInterpreterPath": "${workspaceFolder}/cloud-paper/.venv",
     "python.analysis.autoImportCompletions": true,
     "python.analysis.indexing": true,
     "python.analysis.typeCheckingMode": "off",

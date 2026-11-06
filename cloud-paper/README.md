@@ -19,6 +19,17 @@
 
 已存在的 Codespace 如果早于这份配置创建，建议在该分支新建一个，或在其中重建容器后再检查状态。
 
+## 编辑器提示找不到 Python 解释器
+
+若提示无法解析 `.venv/Scripts/python.exe`，这是旧的 Windows 解释器设置。Codespaces 使用 Linux；模拟启动器独立使用 `cloud-paper/.venv/bin/python`，此弹窗本身不代表模拟进程失败。
+
+仓库已把默认解释器改为 `${workspaceFolder}/cloud-paper/.venv`，由编辑器按系统识别。已有实例可能缓存旧选择，需手动切换：
+
+1. 在网页编辑器按 **Ctrl+Shift+P**，输入并选择 **Python: Select Interpreter**（Python：选择解释器）。
+2. 选择 **Enter interpreter path...**（输入解释器路径），填入 `cloud-paper/.venv/bin/python` 的完整路径。默认仓库目录下为 `/workspaces/czsc/cloud-paper/.venv/bin/python`；若工作区目录不同，以终端 `pwd` 为准。
+3. 如果解释器文件不存在，在仓库根目录终端执行 `python3 -I cloud-paper/setup.py`，等 `setup_complete` 后再选择。
+4. 在终端运行 `python3 -I cloud-paper/launch.py status`，核对真实程序状态、行情和账本。更改编辑器解释器不会自动补发交易信号。
+
 ## 查看状态和控制运行
 
 在仓库根目录的 Codespaces 终端使用：
