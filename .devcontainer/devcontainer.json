@@ -1,0 +1,8 @@
+{
+  "name": "CZSC BTC-USD 自动模拟",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "remoteUser": "vscode",
+  "postCreateCommand": "python3 -I cloud-paper/setup.py",
+  "postStartCommand": "python3 -I cloud-paper/launch.py start --background",
+  "waitFor": "postCreateCommand"
+}

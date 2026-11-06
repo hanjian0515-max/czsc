@@ -8,6 +8,12 @@
 
 GitHub文件页面点击 Download raw file / 下载原始文件。下载EXE受限时可使用ZIP。
 
+## GitHub 云端自动模拟
+
+[创建 GitHub Codespaces 模拟环境](https://codespaces.new/hanjian0515-max/czsc/tree/codex/quant-installer-v0.3) · [云端操作说明](../../cloud-paper/README.md)
+
+在 GitHub 点击 Create codespace 后，自动安装依赖并尝试连接公开行情、启动 BTC-USD 现货模拟账户（10,000 USD）。在终端运行 `python3 -I cloud-paper/launch.py status` 核对行情与成交。Codespaces 创建成功不代表行情已接通；没有有效信号时保持空仓。休眠或停止期间不运行。
+
 ## 使用
 
 1. 准备Python3.12 64位，已有则保留；缺少时可按Python启动器提示运行 py install 3.12。
