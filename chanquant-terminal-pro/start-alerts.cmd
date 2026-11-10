@@ -26,9 +26,9 @@ if not exist ".venv\Scripts\python.exe" (
   %CQ_ALERT_PY% -m venv .venv
   if errorlevel 1 goto :failed
 )
-".venv\Scripts\python.exe" -c "import importlib.metadata; from zoneinfo import ZoneInfo; assert importlib.metadata.version('czsc') == '1.0.2'; ZoneInfo('Asia/Shanghai')" >nul 2>nul
+".venv\Scripts\python.exe" -c "import importlib.metadata; from zoneinfo import ZoneInfo; assert importlib.metadata.version('czsc') == '1.0.2'; assert importlib.metadata.version('pytdx') == '1.72'; from pytdx.hq import TdxHq_API; ZoneInfo('Asia/Shanghai')" >nul 2>nul
 if errorlevel 1 (
-  echo 首次启动需要联网安装CZSC及分析依赖，可能需要几分钟。
+  echo 首次启动或升级需要联网安装CZSC和通达信行情依赖，可能需要几分钟。
   ".venv\Scripts\python.exe" -m pip install -r requirements-alerts.txt
   if errorlevel 1 goto :failed
 )

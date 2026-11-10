@@ -67,7 +67,7 @@ def harness(tmp_path):
     state.dependencies = dict(analyzer=analyzer, reader=reader, discoverer=discoverer,
                               now=lambda: state.now, background=False)
     state.monitor = LocalMonitor(UNIVERSE, state.store, **state.dependencies)
-    state.monitor.configure({"source_dir": str(source), "symbols": ["600660.SH"]})
+    state.monitor.configure({"data_source": "tdx_local", "source_dir": str(source), "symbols": ["600660.SH"]})
 
     def advance(at="2026-11-09T10:35:00", asof="2026-11-09T10:30:00", **changes):
         state.now = stamp(at)
@@ -550,7 +550,7 @@ def cached_monitor(tmp_path):
 
     state.monitor = LocalMonitor(UNIVERSE, state.store, analyzer=analyzer,
                                  now=lambda: state.now, background=False)
-    state.monitor.configure({"source_dir": str(source), "symbols": ["600660.SH"]})
+    state.monitor.configure({"data_source": "tdx_local", "source_dir": str(source), "symbols": ["600660.SH"]})
     yield state
     state.monitor.close()
 
@@ -806,7 +806,7 @@ def test_legacy_saved_configuration_migrates_to_local_source_without_warning(tmp
     store.save_config(legacy)
     monitor = LocalMonitor(UNIVERSE, store, background=False)
     try:
-        assert monitor.status()["config"] == {**legacy, "data_source": "tdx_local"}
+        assert monitor.status()["config"] == {**legacy, "data_source": "tdx_local", "tdx_host": "", "tdx_port": 7709}
         assert monitor.status()["config_warning"] is None
         monitor.configure({"interval_seconds": 60})
         assert store.load_config()["data_source"] == "tdx_local"
@@ -1064,3 +1064,236 @@ def test_local_slow_analysis_uses_actual_publish_time_and_drops_old_slot(harness
     assert stock(h.monitor)["last_scan"] == h.now.isoformat()
     assert h.monitor.status()["last_cycle"] == h.now.isoformat()
     assert not h.store.events_after()
+
+
+def test_new_installation_defaults_to_direct_tdx_without_local_files(tmp_path):
+    monitor = LocalMonitor(UNIVERSE, AlertStore(tmp_path / "new.sqlite3"), background=False)
+    try:
+        config = monitor.status()["config"]
+        assert config["data_source"] == "tdx_online"
+        assert config["tdx_host"] == "" and config["tdx_port"] == 7709
+        assert monitor.status()["config_warning"] is None
+    finally:
+        monitor.close()
+
+
+@pytest.mark.parametrize("data_source", ["tdx_local", "eastmoney"])
+def test_existing_provider_choice_survives_tdx_endpoint_migration(tmp_path, data_source):
+    legacy = {"data_source": data_source, "source_dir": r"D:\old\vipdoc",
+              "interval_seconds": 30, "symbols": ["600660.SH"], "rules": ["buy2"]}
+    store = AlertStore(tmp_path / "old.sqlite3")
+    store.save_config(legacy)
+    monitor = LocalMonitor(UNIVERSE, store, background=False)
+    try:
+        assert monitor.status()["config"] == {**legacy, "tdx_host": "", "tdx_port": 7709}
+        assert monitor.status()["config_warning"] is None
+        monitor.configure({"interval_seconds": 60})
+        assert store.load_config()["data_source"] == data_source
+    finally:
+        monitor.close()
+
+
+@pytest.mark.parametrize("changes", [
+    {"tdx_host": "https://example.com"}, {"tdx_host": "host/path"},
+    {"tdx_host": "example.com:7709"}, {"tdx_host": "invalid host"},
+    {"tdx_host": "300.1.2.3"}, {"tdx_host": None}, {"tdx_host": []},
+    {"tdx_port": 0}, {"tdx_port": 65536}, {"tdx_port": True},
+    {"tdx_port": 7709.0}, {"tdx_port": "7709"},
+])
+def test_tdx_endpoint_configuration_is_validated_before_saving(harness, changes):
+    before = harness.monitor.status()["config"]
+    with pytest.raises(ValueError):
+        harness.monitor.configure(changes)
+    assert harness.monitor.status()["config"] == before == harness.store.load_config()
+
+
+def test_tdx_fetcher_must_be_callable(tmp_path):
+    with pytest.raises(ValueError, match="通达信行情读取器"):
+        LocalMonitor(UNIVERSE, AlertStore(tmp_path / "wrong.sqlite3"), tdx_fetcher=1)
+
+
+@pytest.fixture
+def tdx_monitor(online_monitor):
+    """Explicit synthetic TDX transport; never connects to public quote hosts."""
+    state = online_monitor
+    state.tdx_calls = []
+    state.source = {"kind": "tdx", "provider": "tdx", "label": "synthetic TDX fixture",
+                    "source_host": "119.147.212.81", "source_port": 7709}
+    state.result["source"] = deepcopy(state.source)
+
+    def fetch(symbol, *, now, host, port):
+        state.tdx_calls.append((symbol, now, host, port))
+        return state.fetcher(symbol, now=now)
+
+    def forbid_other_source(*args, **kwargs):
+        pytest.fail("TDX direct mode must not call Eastmoney or local LC5")
+
+    state.monitor._tdx_fetcher = fetch
+    state.monitor._online_fetcher = forbid_other_source
+    state.monitor.configure({"data_source": "tdx_online", "tdx_host": "119.147.212.81", "tdx_port": 7709})
+    return state
+
+
+def test_tdx_initial_scan_uses_explicit_server_and_silent_baseline(tdx_monitor):
+    h = tdx_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    assert h.tdx_calls == [("600660.SH", h.now, "119.147.212.81", 7709)]
+    assert stock(h.monitor)["state"] == "ready"
+    assert stock(h.monitor)["source"] == h.source
+    assert not h.store.events_after()
+
+
+def test_tdx_new_closed_signal_records_provenance_once(tdx_monitor):
+    h = tdx_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance()
+    h.result["events"][0]["evidence"]["source"] = deepcopy(h.source)
+    h.monitor.scan_once()
+    h.monitor.scan_once()
+    rows = h.store.events_after()
+    assert len(rows) == 1 and rows[0]["is_test"] is False
+    assert rows[0]["bar_end"] == "2026-11-09T10:30:00+08:00"
+    assert rows[0]["evidence"]["source"] == h.source
+    assert len(h.tdx_calls) == 3
+
+
+@pytest.mark.parametrize("error,state", [
+    (OSError("通达信节点连接超时"), "network_error"),
+    (ValueError("通达信数据为空"), "data_error"),
+    (RuntimeError("通达信依赖缺失"), "data_error"),
+])
+def test_tdx_failure_clears_old_quote_and_never_uses_another_source(tdx_monitor, error, state):
+    h = tdx_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance()
+    h.fetch_error = error
+    h.monitor.scan_once()
+    current = stock(h.monitor)
+    assert current["state"] == state and str(error) in current["error"]
+    assert current["snapshot"] == current["source"] == current["quality"] == {}
+    assert current["asof"] is None and not h.store.events_after()
+    assert len(h.analyses) == 1
+
+
+def test_tdx_first_failure_recovery_is_still_silent(tdx_monitor):
+    h = tdx_monitor
+    h.fetch_error = OSError("synthetic node unavailable")
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.fetch_error = None
+    h.advance()
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "ready" and not h.store.events_after()
+    h.advance("2026-11-09T11:05:00", "2026-11-09T11:00:00")
+    h.monitor.scan_once()
+    assert len(h.store.events_after()) == 1
+
+
+@pytest.mark.parametrize("changes", [{"tdx_host": "119.147.212.83"}, {"tdx_port": 7710}])
+def test_tdx_server_changes_reset_baseline_and_next_scan_is_silent(tdx_monitor, changes):
+    h = tdx_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance()
+    h.monitor.scan_once()
+    assert len(h.store.events_after()) == 1
+    h.monitor.configure(changes)
+    assert not h.monitor._baselines and not h.monitor._analysis_cache
+    h.advance("2026-11-09T11:05:00", "2026-11-09T11:00:00")
+    h.monitor.scan_once()
+    assert len(h.store.events_after()) == 1
+    call = h.tdx_calls[-1]
+    assert call[2] == changes.get("tdx_host", "119.147.212.81")
+    assert call[3] == changes.get("tdx_port", 7709)
+    h.advance("2026-11-09T11:35:00", "2026-11-09T11:30:00")
+    h.monitor.scan_once()
+    assert len(h.store.events_after()) == 2
+
+
+def test_switch_from_eastmoney_to_tdx_does_not_replay_existing_signals(online_monitor):
+    h = online_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    first_fetch_count = len(h.fetches)
+    h.monitor._tdx_fetcher = lambda symbol, *, now, host, port: h.frame(symbol)
+    h.monitor.configure({"data_source": "tdx_online"})
+    h.advance()
+    h.monitor.scan_once()
+    assert len(h.fetches) == first_fetch_count and not h.store.events_after()
+    h.advance("2026-11-09T11:05:00", "2026-11-09T11:00:00")
+    h.monitor.scan_once()
+    assert len(h.store.events_after()) == 1
+
+
+def test_pause_during_tdx_request_discards_inflight_data(tdx_monitor):
+    h = tdx_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance()
+    entered, release = threading.Event(), threading.Event()
+
+    def delayed_fetch(symbol, *, now, host, port):
+        entered.set()
+        assert release.wait(3)
+        return h.frame(symbol)
+
+    h.monitor._tdx_fetcher = delayed_fetch
+    worker = threading.Thread(target=h.monitor.scan_once)
+    worker.start()
+    assert entered.wait(3)
+    h.monitor.pause()
+    release.set()
+    worker.join(3)
+    assert not worker.is_alive() and len(h.analyses) == 1
+    assert stock(h.monitor)["state"] == "paused" and not h.store.events_after()
+
+
+def test_tdx_request_crossing_close_rechecks_current_time(tdx_monitor):
+    h = tdx_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance("2026-11-09T10:29:59", "2026-11-09T10:00:00")
+
+    def delayed_fetch(symbol, *, now, host, port):
+        h.now = stamp("2026-11-09T10:30:01")
+        return h.frame(symbol)
+
+    h.monitor._tdx_fetcher = delayed_fetch
+    h.monitor.scan_once()
+    assert h.analyses[-1][2] == h.now
+    assert stock(h.monitor)["state"] == "stale" and not h.store.events_after()
+
+
+def test_tdx_empty_data_does_not_reach_analyzer(tdx_monitor):
+    h = tdx_monitor
+    h.empty = True
+    h.monitor.start()
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "data_error"
+    assert not h.analyses and not h.store.events_after()
+
+
+def test_tdx_default_dependency_loads_only_tdx_fetcher(tmp_path, monkeypatch):
+    from alerts import tdx_online, online
+    calls = []
+
+    def fetch(symbol, *, now, host, port):
+        calls.append((symbol, host, port))
+        return pd.DataFrame([{"symbol": symbol}])
+
+    monkeypatch.setattr(tdx_online, "fetch_five_minute", fetch)
+    monkeypatch.setattr(online, "fetch_five_minute", lambda *args, **kwargs: pytest.fail("unexpected HTTP provider"))
+    monitor = LocalMonitor(UNIVERSE, AlertStore(tmp_path / "dependency.sqlite3"),
+        analyzer=lambda *args, **kwargs: analysis(), now=lambda: stamp("2026-11-09T10:05:00"), background=False)
+    monitor.configure({"symbols": ["600660.SH"], "source_dir": str(tmp_path / "does-not-exist")})
+    try:
+        monitor.start()
+        monitor.scan_once()
+        assert calls == [("600660.SH", "", 7709)]
+        assert stock(monitor)["state"] == "ready" and not monitor.store.events_after()
+        assert monitor._reader is None and monitor._discoverer is None and monitor._online_fetcher is None
+    finally:
+        monitor.close()

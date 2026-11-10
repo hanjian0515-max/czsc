@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import desktop_alerts as app
-from alerts import online,signal_engine
+from alerts import online,signal_engine,tdx_online
 
 CHINA=ZoneInfo('Asia/Shanghai')
 
@@ -38,7 +38,7 @@ def test_probe_rechecks_real_clock_after_slow_fetch_and_analysis(monkeypatch):
         return synthetic_analysis()
     monkeypatch.setattr(online,'fetch_five_minute',fetch)
     monkeypatch.setattr(signal_engine,'analyze_five_minute',analyze)
-    result=app.check_online_market('600660.SH')
+    result=app.check_online_market('600660.SH',data_source='eastmoney')
     assert seen['fetch_now']==stamp('2026-11-10T10:29:59')
     assert seen['analysis_now']==stamp('2026-11-10T10:30:02')
     assert result['fresh'] is False
@@ -49,7 +49,7 @@ def test_explicit_probe_clock_is_deterministic_and_does_not_return_alerts(monkey
     monkeypatch.setattr(app,'_china_now',lambda:pytest.fail('injected clock must remain fixed'))
     monkeypatch.setattr(online,'fetch_five_minute',lambda symbol,*,now:object())
     monkeypatch.setattr(signal_engine,'analyze_five_minute',lambda frame,**kwargs:synthetic_analysis())
-    result=app.check_online_market('600660.SH',now=stamp('2026-11-10T10:15:00'))
+    result=app.check_online_market('600660.SH',now=stamp('2026-11-10T10:15:00'),data_source='eastmoney')
     assert result['fresh'] is True
     assert result['source']['kind']=='synthetic_test_fixture'
     assert 'events' not in result
@@ -70,14 +70,15 @@ def test_network_failure_never_runs_signal_analysis(monkeypatch):
     monkeypatch.setattr(online,'fetch_five_minute',fail)
     monkeypatch.setattr(signal_engine,'analyze_five_minute',lambda *args,**kwargs:pytest.fail('no analysis fallback'))
     with pytest.raises(online.OnlineNetworkError):
-        app.check_online_market('600660.SH')
+        app.check_online_market('600660.SH',data_source='eastmoney')
     assert len(calls)==1
 
 
 @pytest.mark.parametrize('failure',[False,True])
 def test_cli_check_outputs_json_without_starting_server(monkeypatch,capsys,failure):
-    def check(symbol):
+    def check(symbol,**kwargs):
         assert symbol=='600660.SH'
+        assert kwargs=={'data_source':'tdx_online','host':'','port':7709}
         if failure:raise online.OnlineNetworkError('synthetic failure')
         return {**synthetic_analysis(),'fresh':True}
     monkeypatch.setattr(app,'check_online_market',check)
@@ -104,3 +105,24 @@ def test_current_server_reuses_existing_instance(monkeypatch,tmp_path):
     payload={'app':app.APP_ID,'version':app.APP_VERSION}
     monkeypatch.setattr(app.urllib.request,'urlopen',lambda *args,**kwargs:io.BytesIO(json.dumps(payload).encode()))
     assert app.main(['--no-browser','--data-dir',str(tmp_path)])==0
+
+
+def test_direct_tdx_probe_forwards_endpoint_and_never_uses_eastmoney(monkeypatch):
+    calls=[]
+    def fetch(symbol,*,now,host,port):
+        calls.append((symbol,now,host,port))
+        return object()
+    monkeypatch.setattr(tdx_online,'fetch_five_minute',fetch)
+    monkeypatch.setattr(online,'fetch_five_minute',lambda *args,**kwargs:pytest.fail('direct TDX must not use Eastmoney'))
+    monkeypatch.setattr(signal_engine,'analyze_five_minute',lambda frame,**kwargs:synthetic_analysis())
+    clock=stamp('2026-11-10T10:15:00')
+    result=app.check_online_market('600660.SH',now=clock,host='QUOTE.Example.com',port=7710)
+    assert calls==[('600660.SH',clock,'quote.example.com',7710)]
+    assert result['fresh'] is True and 'events' not in result
+
+
+@pytest.mark.parametrize('options',[{'host':'https://quote.example.com'}, {'port':True}, {'port':0}, {'data_source':'tdx_local'}])
+def test_direct_tdx_probe_rejects_invalid_settings_before_any_source(monkeypatch,options):
+    monkeypatch.setattr(tdx_online,'fetch_five_minute',lambda *args,**kwargs:pytest.fail('invalid endpoint must not connect'))
+    monkeypatch.setattr(online,'fetch_five_minute',lambda *args,**kwargs:pytest.fail('invalid source must not fall back'))
+    with pytest.raises(ValueError):app.check_online_market('600660.SH',**options)

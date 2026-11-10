@@ -1,1 +1,1 @@
-czsc==1.0.2
+-r requirements-alerts.txt

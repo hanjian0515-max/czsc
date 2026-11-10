@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 
 ROOT=Path(__file__).resolve().parent
 APP_ID='chanquant-local-stock-alerts-v1'
-APP_VERSION='1.1.0'
+APP_VERSION='1.2.0'
 
 
 def load_universe():
@@ -159,9 +159,17 @@ class AlertHandler(BaseHTTPRequestHandler):
                 self._json({'ok':True,'alert':self.server.monitor.test_alert()});return
             if path=='/api/check-market':
                 symbol=data.get('symbol')
-                if set(data)!={'symbol'} or symbol not in {s['symbol'] for s in self.server.universe}:
+                if not set(data)<={'symbol','data_source','tdx_host','tdx_port'} or not isinstance(symbol,str) or symbol not in {s['symbol'] for s in self.server.universe}:
                     raise ValueError('请选择股票池内的个股检查行情连接')
-                self._json({'ok':True,**check_online_market(symbol)});return
+                config=self.server.monitor.status()['config']
+                source=data.get('data_source',config['data_source'])
+                if 'data_source' not in data and source=='tdx_local':source='tdx_online'
+                host=data.get('tdx_host',config.get('tdx_host',''))
+                port=data.get('tdx_port',config.get('tdx_port',7709))
+                if source not in {'tdx_online','eastmoney'}:raise ValueError('请选择通达信行情直连或东方财富联网行情')
+                from alerts.tdx_online import validate_endpoint
+                host,port=validate_endpoint(host,port)
+                self._json({'ok':True,**check_online_market(symbol,data_source=source,host=host,port=port)});return
             if path=='/api/shutdown':
                 self.server.monitor.pause();self._json({'ok':True})
                 threading.Thread(target=self.server.shutdown,daemon=True).start();return
@@ -179,9 +187,12 @@ def self_check():
     from alerts.monitor import AlertStore,LocalMonitor
     from czsc import CZSC,BarGenerator,CzscSignals,format_standard_kline
     from alerts.online import fetch_five_minute
+    from pytdx.hq import TdxHq_API
+    from alerts.tdx_online import fetch_five_minute as fetch_tdx
     version=importlib.metadata.version('czsc')
     return {'app':APP_ID,'version':APP_VERSION,'stocks':len(load_universe()),'czsc_version':version,'rules':RULE_LABELS,
-            'sources':{'tdx_local':'通达信本地5分钟文件','eastmoney':'东方财富公开5分钟行情'},
+            'pytdx_version':importlib.metadata.version('pytdx'),
+            'sources':{'tdx_online':'通达信行情直连','tdx_local':'通达信本地5分钟文件','eastmoney':'东方财富公开5分钟行情'},
             'mode':'read-only alerts; no broker or order routing'}
 
 
@@ -191,15 +202,19 @@ def _china_now():
     return datetime.now(ZoneInfo('Asia/Shanghai'))
 
 
-def check_online_market(symbol,now=None):
+def check_online_market(symbol,now=None,*,data_source='tdx_online',host='',port=7709):
     """Fetch actual source data without persisting or notifying any signal."""
     from alerts.online import fetch_five_minute
+    from alerts.tdx_online import fetch_five_minute as fetch_tdx,validate_endpoint
     from alerts.signal_engine import analyze_five_minute
     from alerts.monitor import latest_completed_bar,_local_stamp
     if symbol not in {stock['symbol'] for stock in load_universe()}:
         raise ValueError('请选择股票池内的个股检查行情连接')
+    if data_source not in {'tdx_online','eastmoney'}:
+        raise ValueError('请选择通达信行情直连或东方财富联网行情')
+    host,port=validate_endpoint(host,port)
     current=_local_stamp(now) if now is not None else _china_now()
-    frame=fetch_five_minute(symbol,now=current)
+    frame=fetch_tdx(symbol,now=current,host=host,port=port) if data_source=='tdx_online' else fetch_five_minute(symbol,now=current)
     analysis_now=current if now is not None else _china_now()
     result=analyze_five_minute(frame,warmup=200,now=analysis_now)
     final_now=current if now is not None else _china_now()
@@ -215,11 +230,14 @@ def main(argv=None):
     parser.add_argument('--data-dir',type=Path,default=ROOT/'app_data')
     parser.add_argument('--self-check',action='store_true')
     parser.add_argument('--check-online',metavar='SYMBOL',help='只读检查联网行情，例如600660.SH，不创建预警')
+    parser.add_argument('--source',choices=('tdx_online','eastmoney'),default='tdx_online',help='联网检查来源，默认通达信行情直连')
+    parser.add_argument('--tdx-host',default='',help='通达信行情主站IP或域名，留空使用自动节点')
+    parser.add_argument('--tdx-port',type=int,default=7709)
     args=parser.parse_args(argv)
     if args.self_check:print(json.dumps(self_check(),ensure_ascii=False,indent=2));return 0
     if args.check_online:
         try:
-            print(json.dumps({'ok':True,**check_online_market(args.check_online)},ensure_ascii=False,indent=2,default=str))
+            print(json.dumps({'ok':True,**check_online_market(args.check_online,data_source=args.source,host=args.tdx_host,port=args.tdx_port)},ensure_ascii=False,indent=2,default=str))
             return 0
         except (OSError,ValueError,RuntimeError) as exc:
             print(json.dumps({'ok':False,'error':str(exc)},ensure_ascii=False))

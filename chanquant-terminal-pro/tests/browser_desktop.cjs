@@ -27,12 +27,16 @@ universe=load_universe()
 store=AlertStore(Path(sys.argv[1])/'alerts.sqlite3')
 def synthetic_transport_failure(symbol,now=None):
     raise OnlineNetworkError('SYNTHETIC offline test: no market connection was made')
-def synthetic_probe(symbol,now=None):
+def synthetic_tdx_failure(symbol,now=None,host='',port=7709):
+    raise OSError('SYNTHETIC offline TDX test: no TCP connection was made')
+def synthetic_probe(symbol,now=None,**options):
     return dict(symbol=symbol,asof=None,last_five_asof=None,bars30_count=0,
         status='insufficient_history',snapshot={},quality={'alertable':False},
-        source={'provider':'synthetic_contract_fixture','label':'SYNTHETIC test fixture; not market data'},fresh=False)
+        source={'provider':'synthetic_contract_fixture','label':'SYNTHETIC test fixture; not market data',
+            'source_host':options.get('host',''),'source_port':options.get('port',7709)},fresh=False)
 app.check_online_market=synthetic_probe
-monitor=LocalMonitor(universe,store,online_fetcher=synthetic_transport_failure)
+monitor=LocalMonitor(universe,store,online_fetcher=synthetic_transport_failure,tdx_fetcher=synthetic_tdx_failure)
+monitor.configure({'data_source':'tdx_local'})
 server=AlertHTTPServer(('127.0.0.1',0),monitor,store,universe)
 print(server.server_address[1],flush=True)
 try: server.serve_forever(poll_interval=.1)
@@ -169,6 +173,28 @@ let browser;
   await page.reload();
   await page.waitForFunction(()=>document.querySelectorAll('#stock-list .stock-row').length===43);
   check('online source selection persists across reload',await page.locator('#data-source').inputValue()==='eastmoney');
+  await page.locator('#data-source').selectOption('tdx_online');
+  check('direct TDX mode displays server fields and hides LC5',await page.locator('#tdx-source-fields').isVisible()&&!(await page.locator('#local-source-fields').isVisible()));
+  await page.locator('#tdx-host').fill('192.0.2.1');
+  await page.locator('#tdx-port').fill('7710');
+  await page.screenshot({path:path.join(out,'desktop-tdx.png'),fullPage:true});
+  await page.locator('#check-market').click();
+  await page.waitForFunction(()=>document.querySelector('#market-check-result').textContent.includes('192.0.2.1:7710'));
+  check('TDX connection probe forwards selected endpoint without creating alerts',await page.locator('[data-alert-id]').count()===2);
+  await page.locator('#tdx-port').fill('0');
+  await page.locator('#save-settings').click();
+  await page.waitForFunction(()=>!document.querySelector('#error-banner').hidden&&document.querySelector('#error-text').textContent.includes('65535'));
+  check('invalid TDX port is rejected with readable error');
+  await page.locator('#tdx-port').fill('7710');
+  await page.locator('#save-settings').click();
+  await page.locator('#start-monitor').click();
+  await page.locator('#refresh-now').click();
+  await page.waitForFunction(()=>Array.from(document.querySelectorAll('.stock-row')).find(x=>x.dataset.symbol==='600660.SH')?.textContent.includes('联网失败'));
+  check('TDX failure never falls back to fabricated or other-provider data',await page.locator('[data-alert-id]').count()===2&&await page.locator('#latest-bar').innerText()==='—');
+  await page.locator('#stop-monitor').click();
+  await page.reload();
+  await page.waitForFunction(()=>document.querySelectorAll('#stock-list .stock-row').length===43);
+  check('TDX endpoint and mode persist across reload',await page.locator('#data-source').inputValue()==='tdx_online'&&await page.locator('#tdx-host').inputValue()==='192.0.2.1'&&await page.locator('#tdx-port').inputValue()==='7710');
   const mobile=await context.newPage();
   await mobile.setViewportSize({width:390,height:844});
   mobile.on('pageerror',error=>pageErrors.push(String(error)));

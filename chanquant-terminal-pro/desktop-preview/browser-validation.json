@@ -1,5 +1,5 @@
 {
-  "checks": 27,
+  "checks": 32,
   "passed": [
     "43 stocks and four rules load from actual backend",
     "unconfigured data shows no invented prices",
@@ -24,6 +24,11 @@
     "connection check displays provenance and creates no event",
     "failed online source reports network error without fabricating signals",
     "online source selection persists across reload",
+    "direct TDX mode displays server fields and hides LC5",
+    "TDX connection probe forwards selected endpoint without creating alerts",
+    "invalid TDX port is rejected with readable error",
+    "TDX failure never falls back to fabricated or other-provider data",
+    "TDX endpoint and mode persist across reload",
     "mobile layout has no page overflow",
     "exit button shuts down local application",
     "no page JavaScript errors",

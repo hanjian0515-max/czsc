@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 
 CHINA = ZoneInfo("Asia/Shanghai")
 RULES = ("buy2", "buy3", "buy23_day", "buy2_optimized")
-DATA_SOURCES = ("tdx_local", "eastmoney")
+DATA_SOURCES = ("tdx_online", "tdx_local", "eastmoney")
 END_TIMES = (time(10), time(10, 30), time(11), time(11, 30),
              time(13, 30), time(14), time(14, 30), time(15))
 
@@ -177,11 +177,13 @@ class LocalMonitor:
 
     def __init__(self, universe, store: AlertStore, analyzer=None, reader=None,
                  discoverer=None, now: Callable | None = None, *, background=True,
-                 online_fetcher=None):
+                 online_fetcher=None, tdx_fetcher=None):
         if not isinstance(background, bool):
             raise ValueError("background必须为布尔值")
         if online_fetcher is not None and not callable(online_fetcher):
             raise ValueError("联网行情读取器必须可调用")
+        if tdx_fetcher is not None and not callable(tdx_fetcher):
+            raise ValueError("通达信行情读取器必须可调用")
         if not isinstance(universe, list) or not universe:
             raise ValueError("股票池不能为空")
         self._universe = {}
@@ -199,6 +201,7 @@ class LocalMonitor:
         self.store = store
         self._analyzer, self._reader, self._discoverer = analyzer, reader, discoverer
         self._online_fetcher = online_fetcher
+        self._tdx_fetcher = tdx_fetcher
         self._now = now or (lambda: datetime.now(CHINA))
         self._background = background
         self._lock, self._scan_lock = threading.RLock(), threading.Lock()
@@ -211,11 +214,16 @@ class LocalMonitor:
         self._analysis_cache = {}
         self._last_cycle = None
         self._config_warning = None
-        self._config = {"data_source": "tdx_local", "source_dir": r"D:\tdx\vipdoc", "interval_seconds": 60,
+        self._config = {"data_source": "tdx_online", "tdx_host": "", "tdx_port": 7709,
+                        "source_dir": r"D:\tdx\vipdoc", "interval_seconds": 60,
                         "symbols": list(self._universe), "rules": list(RULES)}
         try:
             saved = store.load_config()
             if saved:
+                # The first release saved local LC5 settings without a
+                # provider field. Preserve that choice during migration.
+                if "data_source" not in saved:
+                    saved = {**saved, "data_source": "tdx_local"}
                 self._config = self._validate_config({**self._config, **saved})
         except (ValueError, TypeError) as exc:
             self._config_warning = str(exc)
@@ -226,10 +234,12 @@ class LocalMonitor:
         return _local_stamp(self._now())
 
     def _validate_config(self, config):
-        if set(config) != {"data_source", "source_dir", "interval_seconds", "symbols", "rules"}:
+        if set(config) != {"data_source", "source_dir", "interval_seconds", "symbols", "rules", "tdx_host", "tdx_port"}:
             raise ValueError("配置含未知字段")
         if config["data_source"] not in DATA_SOURCES:
-            raise ValueError("行情来源必须为tdx_local或eastmoney")
+            raise ValueError("行情来源必须为tdx_online、tdx_local或eastmoney")
+        from .tdx_online import validate_endpoint
+        tdx_host, tdx_port = validate_endpoint(config["tdx_host"], config["tdx_port"])
         folder = config["source_dir"]
         if not isinstance(folder, str) or "\x00" in folder or len(folder) > 4096:
             raise ValueError("行情目录必须为有效文本路径")
@@ -243,7 +253,8 @@ class LocalMonitor:
             raise ValueError("预警规则无效")
         if len(set(symbols)) != len(symbols) or len(set(rules)) != len(rules):
             raise ValueError("代码或规则不能重复")
-        return {"data_source": config["data_source"], "source_dir": folder.strip(), "interval_seconds": interval,
+        return {"data_source": config["data_source"], "tdx_host": tdx_host, "tdx_port": tdx_port,
+                "source_dir": folder.strip(), "interval_seconds": interval,
                 "symbols": symbols.copy(), "rules": rules.copy()}
 
     def _reset_statuses(self):
@@ -260,7 +271,7 @@ class LocalMonitor:
             if self._closed.is_set():
                 raise ValueError("预警程序已关闭")
             updated = self._validate_config({**self._config, **value})
-            reset = any(updated[k] != self._config[k] for k in ("data_source", "source_dir", "symbols", "rules"))
+            reset = any(updated[k] != self._config[k] for k in ("data_source", "tdx_host", "tdx_port", "source_dir", "symbols", "rules"))
             # Save first: a persistence failure must not silently alter the active config.
             self.store.save_config(updated)
             self._config = updated
@@ -351,6 +362,10 @@ class LocalMonitor:
             if self._online_fetcher is None:
                 from .online import fetch_five_minute
                 self._online_fetcher = fetch_five_minute
+        elif data_source == "tdx_online":
+            if self._tdx_fetcher is None:
+                from .tdx_online import fetch_five_minute
+                self._tdx_fetcher = fetch_five_minute
         elif self._reader is None or self._discoverer is None:
             from .sources import discover_lc5, read_lc5
             self._reader = self._reader or read_lc5
@@ -428,8 +443,8 @@ class LocalMonitor:
             except Exception as exc:
                 for symbol in config["symbols"]:
                     self._set_error(symbol, generation, self._clock(), exc,
-                                    "data_error" if config["data_source"] == "eastmoney" else "error",
-                                    clear_data=config["data_source"] == "eastmoney")
+                                    "data_error" if config["data_source"] != "tdx_local" else "error",
+                                    clear_data=config["data_source"] != "tdx_local")
                 with self._lock:
                     if self._active(generation):
                         self._last_cycle = self._clock().isoformat()
@@ -438,9 +453,13 @@ class LocalMonitor:
                 with self._lock:
                     if not self._active(generation):
                         return True
-                if config["data_source"] == "eastmoney":
+                if config["data_source"] != "tdx_local":
                     try:
-                        frame = self._online_fetcher(symbol, now=self._clock())
+                        if config["data_source"] == "tdx_online":
+                            frame = self._tdx_fetcher(symbol, now=self._clock(),
+                                host=config["tdx_host"], port=config["tdx_port"])
+                        else:
+                            frame = self._online_fetcher(symbol, now=self._clock())
                         if frame is None or getattr(frame, "empty", True):
                             raise ValueError("联网行情为空，未计算信号")
                         with self._lock:

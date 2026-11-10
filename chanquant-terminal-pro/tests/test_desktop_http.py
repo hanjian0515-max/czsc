@@ -30,6 +30,9 @@ def app(tmp_path):
     store = AlertStore(tmp_path / "state" / "alerts.sqlite3")
     monitor = LocalMonitor(universe, store, background=False,
                            now=lambda: datetime(2026, 11, 9, 10, 5, tzinfo=CHINA))
+    # These baseline checks intentionally exercise the original local mode.
+    # The new direct-TDX default is verified separately with a fresh store.
+    monitor.configure({"data_source": "tdx_local"})
     source = tmp_path / "vipdoc"
     source.mkdir()
     server = desktop_alerts.AlertHTTPServer(("127.0.0.1", 0), monitor, store, universe,
@@ -161,27 +164,32 @@ def test_html_replaces_exactly_one_token_and_sets_browser_security_headers(app, 
 
 @pytest.mark.parametrize("config", [{"interval_seconds": 1}, {"symbols": ["000001.SH"]},
     {"rules": ["buy1"]}, {"sound": True}, {"source_dir": 123},
-    {"data_source": "unknown-provider"}, {"data_source": True}])
+    {"data_source": "unknown-provider"}, {"data_source": True},
+    {"tdx_host": "https://example.invalid/"}, {"tdx_host": "host with spaces"},
+    {"tdx_port": 0}, {"tdx_port": 65536}, {"tdx_port": True}, {"tdx_port": "7709"}])
 def test_invalid_config_returns_400_without_changing_monitor_or_saved_config(app, config):
     before = app.monitor.status()["config"]
+    saved_before = app.store.load_config()
     response = app.request("/api/config", "POST", data=config)
     assert response.status == 400 and response.json()["ok"] is False
     assert app.monitor.status()["config"] == before
-    assert app.store.load_config() is None
+    assert app.store.load_config() == saved_before
 
 
 @pytest.mark.parametrize("body", [b"{", b"not-json", b"[]", b"null", b"true", b'"string"', b"\xff"])
 def test_malformed_or_nonobject_json_returns_400(app, body):
+    saved_before = app.store.load_config()
     response = app.request("/api/config", "POST", raw=body)
     assert response.status == 400 and response.json()["ok"] is False
-    assert app.store.load_config() is None
+    assert app.store.load_config() == saved_before
 
 
 @pytest.mark.parametrize("length", ["1048577", "-1", "not-an-integer"])
 def test_oversized_or_invalid_content_length_is_rejected_before_reading_body(app, length):
+    saved_before = app.store.load_config()
     response = app.request("/api/config", "POST", raw=b"{}", headers={"Content-Length": length})
     assert response.status == 400 and response.json()["ok"] is False
-    assert app.store.load_config() is None
+    assert app.store.load_config() == saved_before
 
 
 def test_configuration_persists_and_start_stop_control_real_monitor(app):
@@ -190,7 +198,8 @@ def test_configuration_persists_and_start_stop_control_real_monitor(app):
     assert initial["config"]["data_source"] == "tdx_local"
     assert app.request("/api/start", "POST", data={}).status == 400
     config = {"data_source": "tdx_local", "source_dir": str(app.source), "interval_seconds": 30,
-              "symbols": ["600660.SH", "300308.SZ"], "rules": ["buy2", "buy23_day"]}
+              "symbols": ["600660.SH", "300308.SZ"], "rules": ["buy2", "buy23_day"],
+              "tdx_host": "", "tdx_port": 7709}
     saved = app.request("/api/config", "POST", data=config)
     assert saved.status == 200 and saved.json()["config"] == config
     assert AlertStore(app.store.path).load_config() == config
@@ -213,7 +222,8 @@ def test_legacy_saved_local_configuration_migrates_through_status_api(app):
     app.server.monitor = migrated
     try:
         status = app.request("/api/status").json()
-        assert status["config"] == {**legacy, "data_source": "tdx_local"}
+        assert status["config"] == {**legacy, "data_source": "tdx_local",
+                                    "tdx_host": "", "tdx_port": 7709}
         assert status["config_warning"] is None
         assert app.request("/api/start", "POST", data={}).status == 200
         assert migrated.status()["running"] is True
@@ -261,7 +271,8 @@ def online_app(app):
                            now=lambda: clock["now"], online_fetcher=fetch, background=False)
     app.server.monitor = monitor
     values = vars(app).copy()
-    values.update(monitor=monitor, clock=clock, failure=failure, quality=quality, fetch_calls=calls)
+    values.update(monitor=monitor, clock=clock, failure=failure, quality=quality, fetch_calls=calls,
+                  fixture_fetch=fetch, fixture_analyze=analyze)
     try:
         yield SimpleNamespace(**values)
     finally:
@@ -269,10 +280,122 @@ def online_app(app):
         monitor.close()
 
 
+@pytest.fixture
+def tdx_app(online_app):
+    """TDX routing uses synthetic frames; no TCP, LC5, or HTTP quote service."""
+    calls = []
+
+    def fetch(symbol, *, now, host, port):
+        calls.append({"symbol": symbol, "now": now, "host": host, "port": port})
+        frame = online_app.fixture_fetch(symbol, now=now)
+        frame.attrs["fixture_source"].update(kind="tdx", provider="tdx",
+            label="合成TDX接口测试，不是实际行情", source_format="TDX-HQ-5M",
+            source_host=host or "automatic-fixture.invalid", source_port=port,
+            source_name="synthetic node", source_url=f"tdx://{host or 'automatic-fixture.invalid'}:{port}")
+        return frame
+
+    def forbidden_other_source(*args, **kwargs):
+        raise AssertionError("Direct TDX must not read LC5 or fall back to Eastmoney")
+
+    monitor = LocalMonitor(online_app.universe, online_app.store,
+        analyzer=online_app.fixture_analyze, now=lambda: online_app.clock["now"],
+        tdx_fetcher=fetch, online_fetcher=forbidden_other_source,
+        reader=forbidden_other_source, discoverer=forbidden_other_source, background=False)
+    online_app.server.monitor = monitor
+    values = vars(online_app).copy()
+    values.update(monitor=monitor, tdx_calls=calls)
+    try:
+        yield SimpleNamespace(**values)
+    finally:
+        online_app.server.monitor = online_app.monitor
+        monitor.close()
+
+
+def configure_tdx(app, *, host="market.example.invalid", port=7710):
+    config = {"data_source": "tdx_online", "source_dir": str(app.source / "does-not-exist"),
+              "interval_seconds": 30, "symbols": ["600660.SH"], "rules": ["buy2"],
+              "tdx_host": host, "tdx_port": port}
+    response = app.request("/api/config", "POST", data=config)
+    assert response.status == 200 and response.json()["config"] == config
+    return config
+
+
+def test_fresh_install_status_defaults_to_direct_tdx(app, tmp_path):
+    store = AlertStore(tmp_path / "new-install.sqlite3")
+    monitor = LocalMonitor(app.universe, store, background=False)
+    app.server.monitor = monitor
+    try:
+        config = app.request("/api/status").json()["config"]
+        assert config["data_source"] == "tdx_online"
+        assert config["tdx_host"] == "" and config["tdx_port"] == 7709
+    finally:
+        app.server.monitor = app.monitor
+        monitor.close()
+
+
+def test_tdx_http_start_has_no_local_file_requirement_and_passes_endpoint(tdx_app):
+    config = configure_tdx(tdx_app)
+    assert not (tdx_app.source / "does-not-exist").exists()
+    assert tdx_app.request("/api/start", "POST", data={}).status == 200
+    assert tdx_app.monitor.scan_once()
+    assert tdx_app.tdx_calls == [{"symbol": "600660.SH", "now": tdx_app.clock["now"],
+                                 "host": config["tdx_host"], "port": config["tdx_port"]}]
+    status = tdx_app.request("/api/status").json()
+    stock = next(row for row in status["stocks"] if row["symbol"] == "600660.SH")
+    assert stock["state"] == "ready" and stock["source"]["provider"] == "tdx"
+    assert stock["source"]["source_host"] == config["tdx_host"]
+    assert tdx_app.request("/api/alerts").json() == {"alerts": [], "last_id": 0}
+
+
+def test_tdx_http_signal_keeps_node_evidence_and_first_scan_stays_silent(tdx_app):
+    configure_tdx(tdx_app)
+    assert tdx_app.request("/api/start", "POST", data={}).status == 200
+    assert tdx_app.monitor.scan_once()
+    assert tdx_app.store.max_id() == 0
+    tdx_app.clock["now"] = datetime(2026, 11, 9, 10, 35, tzinfo=CHINA)
+    assert tdx_app.monitor.scan_once()
+    alerts = tdx_app.request("/api/alerts").json()["alerts"]
+    assert len(alerts) == 1 and alerts[0]["is_test"] is False
+    assert alerts[0]["evidence"]["fixture_only"] is True
+    source = alerts[0]["evidence"]["source"]
+    assert source["provider"] == "tdx" and source["source_port"] == 7710
+    assert source["source_host"] == "market.example.invalid"
+    assert tdx_app.monitor.scan_once()
+    assert tdx_app.request("/api/alerts").json()["alerts"] == alerts
+
+
+def test_tdx_http_failure_has_no_old_snapshot_or_other_provider_fallback(tdx_app):
+    configure_tdx(tdx_app)
+    assert tdx_app.request("/api/start", "POST", data={}).status == 200
+    assert tdx_app.monitor.scan_once()
+    tdx_app.clock["now"] = datetime(2026, 11, 9, 10, 35, tzinfo=CHINA)
+    tdx_app.failure["value"] = TimeoutError("synthetic TDX network error")
+    assert tdx_app.monitor.scan_once()
+    stock = next(row for row in tdx_app.request("/api/status").json()["stocks"]
+                 if row["symbol"] == "600660.SH")
+    assert stock["state"] == "network_error"
+    assert stock["asof"] is None and stock["snapshot"] == {} and stock["source"] == {}
+    assert tdx_app.store.max_id() == 0
+
+
+def test_tdx_http_node_change_reestablishes_silent_baseline(tdx_app):
+    configure_tdx(tdx_app)
+    assert tdx_app.request("/api/start", "POST", data={}).status == 200
+    assert tdx_app.monitor.scan_once()
+    tdx_app.clock["now"] = datetime(2026, 11, 9, 10, 35, tzinfo=CHINA)
+    assert tdx_app.monitor.scan_once() and tdx_app.store.max_id() == 1
+    tdx_app.clock["now"] = datetime(2026, 11, 9, 11, 5, tzinfo=CHINA)
+    response = tdx_app.request("/api/config", "POST", data={"tdx_host": "another.example.invalid"})
+    assert response.status == 200
+    assert tdx_app.monitor.scan_once() and tdx_app.store.max_id() == 1
+    assert tdx_app.tdx_calls[-1]["host"] == "another.example.invalid"
+
+
 def configure_online(app):
     missing_directory = app.source / "not-created"
     config = {"data_source": "eastmoney", "source_dir": str(missing_directory),
-              "interval_seconds": 30, "symbols": ["600660.SH"], "rules": ["buy2"]}
+              "interval_seconds": 30, "symbols": ["600660.SH"], "rules": ["buy2"],
+              "tdx_host": "", "tdx_port": 7709}
     response = app.request("/api/config", "POST", data=config)
     assert response.status == 200 and response.json()["config"] == config
     assert app.store.load_config() == config
@@ -358,6 +481,73 @@ def test_market_probe_rejects_missing_or_nonpool_symbols_before_network(app, mon
     assert app.store.max_id() == 0
 
 
+@pytest.mark.parametrize("extra", [
+    {"data_source": "unknown-provider"}, {"data_source": "tdx_local"},
+    {"tdx_host": "https://example.invalid/path"}, {"tdx_host": "bad host"},
+    {"tdx_host": None}, {"tdx_port": 0}, {"tdx_port": 65536},
+    {"tdx_port": True}, {"tdx_port": "7709"}, {"unexpected": "value"},
+])
+def test_market_probe_rejects_bad_tdx_endpoint_before_any_provider_request(app, monkeypatch, extra):
+    import alerts.online
+    import alerts.tdx_online
+
+    calls = []
+
+    def forbidden_fetch(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("Invalid endpoint must not contact any quote service")
+
+    monkeypatch.setattr(alerts.online, "fetch_five_minute", forbidden_fetch)
+    monkeypatch.setattr(alerts.tdx_online, "fetch_five_minute", forbidden_fetch)
+    payload = {"symbol": "600660.SH", "data_source": "tdx_online", **extra}
+    response = app.request("/api/check-market", "POST", data=payload)
+    assert response.status == 400 and response.json()["ok"] is False
+    assert calls == [] and app.store.max_id() == 0
+
+
+@pytest.mark.parametrize("configured,expected", [("tdx_local", "tdx_online"),
+                                               ("tdx_online", "tdx_online"),
+                                               ("eastmoney", "eastmoney")])
+def test_market_probe_without_source_uses_selected_network_provider(app, monkeypatch, configured, expected):
+    app.monitor.configure({"data_source": configured})
+    calls = []
+
+    def probe(symbol, now=None, **kwargs):
+        calls.append((symbol, kwargs))
+        return {"symbol": symbol, "asof": None, "status": "insufficient_history",
+                "source": {"kind": "synthetic_probe_fixture"}, "fresh": False}
+
+    monkeypatch.setattr(desktop_alerts, "check_online_market", probe)
+    response = app.request("/api/check-market", "POST", data={"symbol": "600660.SH"})
+    assert response.status == 200
+    assert calls[0][0] == "600660.SH" and calls[0][1]["data_source"] == expected
+    assert calls[0][1]["host"] == "" and calls[0][1]["port"] == 7709
+    assert app.store.max_id() == 0 and not app.monitor.status()["running"]
+
+
+def test_market_probe_custom_tdx_node_is_read_only_and_does_not_change_saved_config(app, monkeypatch):
+    app.monitor.configure({"data_source": "tdx_online", "tdx_host": "saved.example.invalid",
+                           "tdx_port": 7709})
+    before = app.monitor.status()["config"]
+    calls = []
+
+    def probe(symbol, now=None, **kwargs):
+        calls.append((symbol, kwargs))
+        return {"symbol": symbol, "asof": None, "status": "insufficient_history",
+                "source": {"kind": "tdx", "provider": "tdx", "source_host": kwargs["host"],
+                           "source_port": kwargs["port"], "label": "synthetic probe fixture"},
+                "fresh": False}
+
+    monkeypatch.setattr(desktop_alerts, "check_online_market", probe)
+    payload = {"symbol": "600660.SH", "data_source": "tdx_online",
+               "tdx_host": "explicit.example.invalid", "tdx_port": 7710}
+    response = app.request("/api/check-market", "POST", data=payload)
+    assert response.status == 200 and response.json()["source"]["source_host"] == payload["tdx_host"]
+    assert calls == [("600660.SH", {"data_source": "tdx_online", "host": "explicit.example.invalid", "port": 7710})]
+    assert app.monitor.status()["config"] == before and app.store.load_config() == before
+    assert app.store.max_id() == 0
+
+
 def test_market_probe_returns_snapshot_and_source_without_creating_alert(app, monkeypatch):
     calls = []
     source = {"kind": "synthetic-http-fixture", "provider": "fixture-only",
@@ -367,12 +557,13 @@ def test_market_probe_returns_snapshot_and_source_without_creating_alert(app, mo
               "status": "ready", "snapshot": {"close": 10.2, "buy2_state": True},
               "quality": {"alertable": True}, "source": source, "fresh": True}
 
-    def probe(symbol, now=None):
+    def probe(symbol, now=None, **kwargs):
         calls.append(symbol)
         return market.copy()
 
     monkeypatch.setattr(desktop_alerts, "check_online_market", probe)
-    response = app.request("/api/check-market", "POST", data={"symbol": "600660.SH"})
+    response = app.request("/api/check-market", "POST",
+                           data={"symbol": "600660.SH", "data_source": "eastmoney"})
     assert response.status == 200
     assert response.json() == {"ok": True, **market}
     assert calls == ["600660.SH"]
@@ -382,11 +573,12 @@ def test_market_probe_returns_snapshot_and_source_without_creating_alert(app, mo
 
 
 def test_market_probe_failure_is_readable_and_does_not_create_alert(app, monkeypatch):
-    def probe(symbol, now=None):
+    def probe(symbol, now=None, **kwargs):
         raise ValueError("合成接口无数据，仅测试错误返回")
 
     monkeypatch.setattr(desktop_alerts, "check_online_market", probe)
-    response = app.request("/api/check-market", "POST", data={"symbol": "600660.SH"})
+    response = app.request("/api/check-market", "POST",
+                           data={"symbol": "600660.SH", "data_source": "eastmoney"})
     assert response.status == 400 and "合成接口无数据" in response.json()["error"]
     assert app.store.max_id() == 0 and app.monitor.status()["running"] is False
 

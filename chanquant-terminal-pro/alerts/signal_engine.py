@@ -32,8 +32,8 @@ SIGNAL_KEYS = {"buy2": ("30分钟_D1#SMA#21_BS2辅助V230320", "二买"),
                "buy3": ("30分钟_D1_三买辅助V230228", "三买")}
 NOTE = "CZSC辅助结构研究预警，不是已验证课程规则、预测收益或自动交易指令"
 _SOURCE_TEXT_FIELDS = ("source_path", "source_format", "price_basis", "snapshot_sha256",
-                       "provider", "source_url", "retrieved_at", "response_sha256")
-_SOURCE_COUNT_FIELDS = ("source_mtime_ns", "loaded_records", "total_records")
+                       "provider", "source_url", "retrieved_at", "response_sha256", "source_host", "source_name", "response_hash_basis")
+_SOURCE_COUNT_FIELDS = ("source_mtime_ns", "loaded_records", "total_records", "source_port", "history_target")
 
 
 def _source_metadata(frame):
@@ -56,6 +56,8 @@ def _source_metadata(frame):
         source["truncated"] = bool(attrs["truncated"])
     if source.get("source_format") == "TDX-LC5-32":
         source.update(kind="tdx_lc5", label="通达信本地5分钟文件")
+    elif source.get("provider") == "tdx":
+        source.update(kind="tdx",label="通达信行情直连")
     elif source.get("provider"):
         source.update(kind=source["provider"], label=source["provider"])
     else:
