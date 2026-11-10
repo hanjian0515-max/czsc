@@ -31,6 +31,36 @@ CONFIG = [
 SIGNAL_KEYS = {"buy2": ("30分钟_D1#SMA#21_BS2辅助V230320", "二买"),
                "buy3": ("30分钟_D1_三买辅助V230228", "三买")}
 NOTE = "CZSC辅助结构研究预警，不是已验证课程规则、预测收益或自动交易指令"
+_SOURCE_TEXT_FIELDS = ("source_path", "source_format", "price_basis", "snapshot_sha256",
+                       "provider", "source_url", "retrieved_at", "response_sha256")
+_SOURCE_COUNT_FIELDS = ("source_mtime_ns", "loaded_records", "total_records")
+
+
+def _source_metadata(frame):
+    """Copy descriptive provenance only; metadata is not source authentication.
+
+    DataFrame attrs may also hold credentials or arbitrary nested objects. Only
+    the expected scalar fields belong in an analysis or persisted alert.
+    """
+    attrs = frame.attrs if isinstance(frame, pd.DataFrame) else {}
+    source = {}
+    for key in _SOURCE_TEXT_FIELDS:
+        value = attrs.get(key)
+        if isinstance(value, str) and value.strip():
+            source[key] = value
+    for key in _SOURCE_COUNT_FIELDS:
+        value = attrs.get(key)
+        if isinstance(value, Integral) and not isinstance(value, (bool, np.bool_)) and value >= 0:
+            source[key] = int(value)
+    if isinstance(attrs.get("truncated"), (bool, np.bool_)):
+        source["truncated"] = bool(attrs["truncated"])
+    if source.get("source_format") == "TDX-LC5-32":
+        source.update(kind="tdx_lc5", label="通达信本地5分钟文件")
+    elif source.get("provider"):
+        source.update(kind=source["provider"], label=source["provider"])
+    else:
+        source.update(kind="unrecorded", label="来源未记录")
+    return source
 
 
 def _local(value):
@@ -228,6 +258,7 @@ def analyze_five_minute(frame, warmup=200, now=None):
     """
     if isinstance(warmup, (bool, np.bool_)) or not isinstance(warmup, Integral) or warmup < 1:
         raise ValueError("warmup必须为正整数")
+    source = _source_metadata(frame)
     five, excluded = _normalize_five(frame, now)
     thirty, audit = _aggregate_thirty(five, now)
     due = audit[audit.due]
@@ -239,7 +270,8 @@ def analyze_five_minute(frame, warmup=200, now=None):
                "alertable": False, "note": "只聚合6个完整5分钟收盘标签；不补分钟，不以滚动高低通道冒充中枢"}
     if thirty.empty:
         return {"symbol": five.symbol.iloc[0], "asof": None, "last_five_asof": _iso(five.dt.iloc[-1]),
-                "bars30_count": 0, "status": "insufficient_history", "snapshot": {}, "events": [], "quality": quality}
+                "bars30_count": 0, "status": "insufficient_history", "snapshot": {}, "events": [],
+                "quality": quality, "source": source}
     window_start = thirty.dt.iloc[-min(len(thirty), warmup)]
     recent = due[due.dt >= window_start]
     quality["recent_closed_gaps"] = int((~recent.complete).sum())
@@ -252,6 +284,8 @@ def analyze_five_minute(frame, warmup=200, now=None):
     else:
         records = _native_records(thirty)
         events, flags = _events_from_records(records, warmup)
+        for event in events:
+            event["evidence"]["source"] = source.copy()
         last = records[-1]
         snapshot = {key: value for key, value in last.items() if key not in {"dt", "symbol", "open", "high", "low"}}
         for key in ["macd_hist", "sma60", "sma60_lag5"]:
@@ -260,4 +294,4 @@ def analyze_five_minute(frame, warmup=200, now=None):
         status = "ready"
     return {"symbol": str(five.symbol.iloc[0]), "asof": _iso(thirty.dt.iloc[-1]),
             "last_five_asof": _iso(five.dt.iloc[-1]), "bars30_count": len(thirty),
-            "status": status, "snapshot": snapshot, "events": events, "quality": quality}
+            "status": status, "snapshot": snapshot, "events": events, "quality": quality, "source": source}

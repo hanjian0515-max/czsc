@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 
 CHINA = ZoneInfo("Asia/Shanghai")
 RULES = ("buy2", "buy3", "buy23_day", "buy2_optimized")
+DATA_SOURCES = ("tdx_local", "eastmoney")
 END_TIMES = (time(10), time(10, 30), time(11), time(11, 30),
              time(13, 30), time(14), time(14, 30), time(15))
 
@@ -175,9 +176,12 @@ class LocalMonitor:
     """
 
     def __init__(self, universe, store: AlertStore, analyzer=None, reader=None,
-                 discoverer=None, now: Callable | None = None, *, background=True):
+                 discoverer=None, now: Callable | None = None, *, background=True,
+                 online_fetcher=None):
         if not isinstance(background, bool):
             raise ValueError("background必须为布尔值")
+        if online_fetcher is not None and not callable(online_fetcher):
+            raise ValueError("联网行情读取器必须可调用")
         if not isinstance(universe, list) or not universe:
             raise ValueError("股票池不能为空")
         self._universe = {}
@@ -194,6 +198,7 @@ class LocalMonitor:
             self._universe[symbol] = deepcopy(item)
         self.store = store
         self._analyzer, self._reader, self._discoverer = analyzer, reader, discoverer
+        self._online_fetcher = online_fetcher
         self._now = now or (lambda: datetime.now(CHINA))
         self._background = background
         self._lock, self._scan_lock = threading.RLock(), threading.Lock()
@@ -206,7 +211,7 @@ class LocalMonitor:
         self._analysis_cache = {}
         self._last_cycle = None
         self._config_warning = None
-        self._config = {"source_dir": r"D:\tdx\vipdoc", "interval_seconds": 60,
+        self._config = {"data_source": "tdx_local", "source_dir": r"D:\tdx\vipdoc", "interval_seconds": 60,
                         "symbols": list(self._universe), "rules": list(RULES)}
         try:
             saved = store.load_config()
@@ -221,8 +226,10 @@ class LocalMonitor:
         return _local_stamp(self._now())
 
     def _validate_config(self, config):
-        if set(config) != {"source_dir", "interval_seconds", "symbols", "rules"}:
+        if set(config) != {"data_source", "source_dir", "interval_seconds", "symbols", "rules"}:
             raise ValueError("配置含未知字段")
+        if config["data_source"] not in DATA_SOURCES:
+            raise ValueError("行情来源必须为tdx_local或eastmoney")
         folder = config["source_dir"]
         if not isinstance(folder, str) or "\x00" in folder or len(folder) > 4096:
             raise ValueError("行情目录必须为有效文本路径")
@@ -236,14 +243,14 @@ class LocalMonitor:
             raise ValueError("预警规则无效")
         if len(set(symbols)) != len(symbols) or len(set(rules)) != len(rules):
             raise ValueError("代码或规则不能重复")
-        return {"source_dir": folder.strip(), "interval_seconds": interval,
+        return {"data_source": config["data_source"], "source_dir": folder.strip(), "interval_seconds": interval,
                 "symbols": symbols.copy(), "rules": rules.copy()}
 
     def _reset_statuses(self):
         self._stocks = {s: {"symbol": s, "name": item["name"],
                            "state": "waiting" if s in self._config["symbols"] else "not_selected",
                            "asof": None, "last_scan": None, "error": None,
-                           "snapshot": {}, "quality": {}}
+                           "snapshot": {}, "quality": {}, "source": {}}
                         for s, item in self._universe.items()}
 
     def configure(self, value: dict) -> dict:
@@ -253,7 +260,7 @@ class LocalMonitor:
             if self._closed.is_set():
                 raise ValueError("预警程序已关闭")
             updated = self._validate_config({**self._config, **value})
-            reset = any(updated[k] != self._config[k] for k in ("source_dir", "symbols", "rules"))
+            reset = any(updated[k] != self._config[k] for k in ("data_source", "source_dir", "symbols", "rules"))
             # Save first: a persistence failure must not silently alter the active config.
             self.store.save_config(updated)
             self._config = updated
@@ -275,7 +282,8 @@ class LocalMonitor:
                 raise ValueError("请至少选择一只个股")
             if not self._config["rules"]:
                 raise ValueError("请至少选择一种预警")
-            if not self._config["source_dir"] or not Path(self._config["source_dir"]).is_dir():
+            if self._config["data_source"] == "tdx_local" and (
+                    not self._config["source_dir"] or not Path(self._config["source_dir"]).is_dir()):
                 raise ValueError("通达信行情目录不存在，请选择包含LC5文件的本地目录")
             if self._running:
                 return
@@ -324,17 +332,26 @@ class LocalMonitor:
     def _active(self, generation):
         return self._running and not self._closed.is_set() and generation == self._generation
 
-    def _set_error(self, symbol, generation, now, message, state="error"):
+    def _set_error(self, symbol, generation, now, message, state="error", *, clear_data=False):
         with self._lock:
             if self._active(generation):
                 self._analysis_cache.pop(symbol, None)
                 self._stocks[symbol].update(state=state, error=str(message), last_scan=now.isoformat())
+                if clear_data:
+                    # A failed fetch cannot display a prior quote as this
+                    # scan's usable online snapshot. Durable event logs stay.
+                    self._stocks[symbol].update(asof=None, snapshot={}, quality={}, source={},
+                                                bars30_count=None, last_five_asof=None)
 
-    def _dependencies(self):
+    def _dependencies(self, data_source="tdx_local"):
         if self._analyzer is None:
             from .signal_engine import analyze_five_minute
             self._analyzer = analyze_five_minute
-        if self._reader is None or self._discoverer is None:
+        if data_source == "eastmoney":
+            if self._online_fetcher is None:
+                from .online import fetch_five_minute
+                self._online_fetcher = fetch_five_minute
+        elif self._reader is None or self._discoverer is None:
             from .sources import discover_lc5, read_lc5
             self._reader = self._reader or read_lc5
             self._discoverer = self._discoverer or discover_lc5
@@ -372,7 +389,7 @@ class LocalMonitor:
             if self._cache_key(path, now) != before:
                 raise DataChangingError("LC5在复用分析期间发生变化，等待下一轮稳定文件")
             # Re-run freshness, baseline and pause checks even on a cache hit.
-            self._accept_analysis(symbol, cached[1], generation, config, now)
+            self._accept_analysis(symbol, cached[1], generation, config, self._clock())
             return
         frame = self._reader(path, max_records=12000)
         if before is not None and self._cache_key(path, now) != before:
@@ -380,7 +397,7 @@ class LocalMonitor:
         result = self._analyzer(frame, warmup=200, now=now)
         if before is not None and self._cache_key(path, now) != before:
             raise DataChangingError("LC5分析期间发生变化，等待下一轮稳定文件")
-        self._accept_analysis(symbol, result, generation, config, now)
+        self._accept_analysis(symbol, result, generation, config, self._clock())
         with self._lock:
             # Invalid/future/gapped analyses are retried, never cached as a
             # substitute for a healthy source. An old generation cannot refill
@@ -397,38 +414,60 @@ class LocalMonitor:
                     return False
                 generation = self._generation
                 config = deepcopy(self._config)
-            now = self._clock()
             try:
-                self._dependencies()
-                folder = Path(config["source_dir"])
-                if not folder.is_dir():
-                    raise ValueError("通达信行情目录不存在或已被移除")
-                files = self._discoverer(folder, config["symbols"])
-                if not isinstance(files, dict):
-                    raise ValueError("本地文件发现结果无效")
+                self._dependencies(config["data_source"])
+                if config["data_source"] == "tdx_local":
+                    folder = Path(config["source_dir"])
+                    if not folder.is_dir():
+                        raise ValueError("通达信行情目录不存在或已被移除")
+                    files = self._discoverer(folder, config["symbols"])
+                    if not isinstance(files, dict):
+                        raise ValueError("本地文件发现结果无效")
+                else:
+                    files = None
             except Exception as exc:
                 for symbol in config["symbols"]:
-                    self._set_error(symbol, generation, now, exc)
+                    self._set_error(symbol, generation, self._clock(), exc,
+                                    "data_error" if config["data_source"] == "eastmoney" else "error",
+                                    clear_data=config["data_source"] == "eastmoney")
                 with self._lock:
                     if self._active(generation):
-                        self._last_cycle = now.isoformat()
+                        self._last_cycle = self._clock().isoformat()
                 return True
             for symbol in config["symbols"]:
                 with self._lock:
                     if not self._active(generation):
                         return True
+                if config["data_source"] == "eastmoney":
+                    try:
+                        frame = self._online_fetcher(symbol, now=self._clock())
+                        if frame is None or getattr(frame, "empty", True):
+                            raise ValueError("联网行情为空，未计算信号")
+                        with self._lock:
+                            if not self._active(generation):
+                                return True
+                        result = self._analyzer(frame, warmup=200, now=self._clock())
+                        # A slow request/analysis may cross the next session
+                        # close. Publish against the actual current cutoff,
+                        # never the start time of a potentially long batch.
+                        self._accept_analysis(symbol, result, generation, config, self._clock())
+                    except Exception as exc:
+                        self._set_error(symbol, generation, self._clock(), exc,
+                                        "network_error" if isinstance(exc, OSError) else "data_error",
+                                        clear_data=True)
+                    continue
                 if symbol not in files:
-                    self._set_error(symbol, generation, now, "未找到该股LC5文件，请先下载本地5分钟历史", "file_missing")
+                    self._set_error(symbol, generation, self._clock(), "未找到该股LC5文件，请先下载本地5分钟历史", "file_missing")
                     continue
                 try:
-                    self._analyze_local(symbol, files[symbol], generation, config, now)
+                    self._analyze_local(symbol, files[symbol], generation, config, self._clock())
                 except Exception as exc:
                     from .sources import DataChangingError
-                    self._set_error(symbol, generation, now, exc,
+                    self._set_error(symbol, generation, self._clock(), exc,
                                     "data_changing" if isinstance(exc, DataChangingError) else "error")
             with self._lock:
                 if self._active(generation):
-                    self._last_cycle = now.isoformat()
+                    self._last_cycle = self._clock().isoformat()
             return True
         finally:
             self._scan_lock.release()
@@ -437,7 +476,8 @@ class LocalMonitor:
         if not isinstance(analysis, dict) or analysis.get("symbol", symbol) != symbol:
             raise ValueError("行情或分析结果代码与所选股票不一致")
         snapshot, quality = analysis.get("snapshot") or {}, analysis.get("quality") or {}
-        if not isinstance(snapshot, dict) or not isinstance(quality, dict):
+        source = analysis.get("source") or {}
+        if not isinstance(snapshot, dict) or not isinstance(quality, dict) or not isinstance(source, dict):
             raise ValueError("分析证据格式无效")
         events = analysis.get("events", [])
         if not isinstance(events, list):
@@ -446,7 +486,7 @@ class LocalMonitor:
         asof = _local_stamp(asof_value) if asof_value is not None else None
         expected = latest_completed_bar(now)
         fresh = asof is not None and expected is not None and asof == expected
-        quality_ok = bool(quality.get("alertable", True))
+        quality_ok = quality.get("alertable") is True
         ready = analysis.get("status") == "ready"
         state, error = "ready", None
         if asof is not None and asof > now:
@@ -454,7 +494,7 @@ class LocalMonitor:
         elif not ready or asof is None:
             state, error = "insufficient_history", "历史或结构预热不足，未发预警"
         elif not quality_ok:
-            state, error = "data_gap", "最近结构所需行情有缺口，未发预警；请补齐本地5分钟历史"
+            state, error = "data_gap", "行情未通过完整性检查或缺少明确质量许可，未发预警；请检查5分钟历史"
         elif not fresh:
             state, error = "stale", "等待来源更新到当前交易日最新已完成30分钟K线"
         with self._lock:
@@ -464,7 +504,7 @@ class LocalMonitor:
             if asof is not None and asof <= now and previous is not None and asof < previous:
                 state, error = "data_regressed", "行情截止时间倒退，未发预警；请检查来源或重新开始监控"
             self._stocks[symbol].update(state=state, error=error, asof=asof.isoformat() if asof else None,
-                last_scan=now.isoformat(), snapshot=deepcopy(snapshot), quality=deepcopy(quality),
+                last_scan=now.isoformat(), snapshot=deepcopy(snapshot), quality=deepcopy(quality), source=deepcopy(source),
                 bars30_count=analysis.get("bars30_count"), last_five_asof=analysis.get("last_five_asof"))
             # Do not let a bad future timestamp poison the later valid baseline.
             if asof is not None and asof <= now:

@@ -3,6 +3,8 @@
 Synthetic notification records test transport/storage only, never stock returns.
 The production monitor is used with its background scanner disabled, so no
 market data, external network access, browser or order service is involved.
+Online-mode fixtures below are explicitly synthetic transport mechanisms;
+their injected frames and signals are never historical or current market data.
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+import pandas as pd
 
 import desktop_alerts
 from alerts.monitor import AlertStore, CHINA, LocalMonitor
@@ -77,7 +80,8 @@ def add_events(app, count, *, message="合成提醒，仅用于传输测试"):
 def test_public_health_and_stock_pool_excludes_all_reference_instruments(app):
     health = app.request("/api/health", token=False)
     assert health.status == 200
-    assert health.json() == {"app": desktop_alerts.APP_ID, "version": "1.0", "read_only": True}
+    assert health.json() == {"app": desktop_alerts.APP_ID, "version": desktop_alerts.APP_VERSION,
+                            "read_only": True}
     response = app.request("/api/stocks")
     assert response.status == 200
     stocks = response.json()["stocks"]
@@ -94,6 +98,7 @@ def test_public_health_and_stock_pool_excludes_all_reference_instruments(app):
 @pytest.mark.parametrize("path,method", [("/api/stocks", "GET"), ("/api/status", "GET"),
     ("/api/alerts", "GET"), ("/api/export-alerts.csv", "GET"), ("/api/directories", "GET"),
     ("/api/start", "POST"), ("/api/config", "POST"), ("/api/test-alert", "POST"),
+    ("/api/check-market", "POST"),
     ("/api/shutdown", "POST")])
 def test_all_private_routes_require_current_session_token(app, path, method):
     response = app.request(path, method, raw=b"{}" if method == "POST" else None, token=False)
@@ -155,7 +160,8 @@ def test_html_replaces_exactly_one_token_and_sets_browser_security_headers(app, 
 
 
 @pytest.mark.parametrize("config", [{"interval_seconds": 1}, {"symbols": ["000001.SH"]},
-    {"rules": ["buy1"]}, {"sound": True}, {"source_dir": 123}])
+    {"rules": ["buy1"]}, {"sound": True}, {"source_dir": 123},
+    {"data_source": "unknown-provider"}, {"data_source": True}])
 def test_invalid_config_returns_400_without_changing_monitor_or_saved_config(app, config):
     before = app.monitor.status()["config"]
     response = app.request("/api/config", "POST", data=config)
@@ -181,8 +187,9 @@ def test_oversized_or_invalid_content_length_is_rejected_before_reading_body(app
 def test_configuration_persists_and_start_stop_control_real_monitor(app):
     initial = app.request("/api/status").json()
     assert initial["running"] is False
+    assert initial["config"]["data_source"] == "tdx_local"
     assert app.request("/api/start", "POST", data={}).status == 400
-    config = {"source_dir": str(app.source), "interval_seconds": 30,
+    config = {"data_source": "tdx_local", "source_dir": str(app.source), "interval_seconds": 30,
               "symbols": ["600660.SH", "300308.SZ"], "rules": ["buy2", "buy23_day"]}
     saved = app.request("/api/config", "POST", data=config)
     assert saved.status == 200 and saved.json()["config"] == config
@@ -196,6 +203,192 @@ def test_configuration_persists_and_start_stop_control_real_monitor(app):
     assert app.request("/api/stop", "POST", data={}).status == 200
     assert app.monitor.status()["running"] is False
     assert not app.request("/api/alerts").json()["alerts"]
+
+
+def test_legacy_saved_local_configuration_migrates_through_status_api(app):
+    legacy = {"source_dir": str(app.source), "interval_seconds": 30,
+              "symbols": ["600660.SH"], "rules": ["buy2"]}
+    app.store.save_config(legacy)
+    migrated = LocalMonitor(app.universe, app.store, background=False)
+    app.server.monitor = migrated
+    try:
+        status = app.request("/api/status").json()
+        assert status["config"] == {**legacy, "data_source": "tdx_local"}
+        assert status["config_warning"] is None
+        assert app.request("/api/start", "POST", data={}).status == 200
+        assert migrated.status()["running"] is True
+    finally:
+        app.server.monitor = app.monitor
+        migrated.close()
+
+
+@pytest.fixture
+def online_app(app):
+    """Actual HTTP/SQLite with explicitly synthetic online source/analysis."""
+    clock = {"now": datetime(2026, 11, 9, 10, 5, tzinfo=CHINA)}
+    failure = {"value": None}
+    quality = {"value": {"alertable": True}}
+    calls = []
+
+    def fetch(symbol, *, now):
+        calls.append({"symbol": symbol, "now": now})
+        if failure["value"] is not None:
+            raise failure["value"]
+        ending = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
+        frame = pd.DataFrame([{"symbol": symbol, "dt": ending, "open": 10.,
+                               "close": 10.2, "high": 10.3, "low": 9.9,
+                               "vol": 1000., "amount": 10200.}])
+        frame.attrs["fixture_source"] = {"kind": "synthetic-http-fixture",
+            "label": "合成接口测试，不是实际行情", "provider": "fixture-only",
+            "source_url": "https://example.invalid/not-contacted", "price_basis": "raw",
+            "retrieved_at": now.isoformat()}
+        return frame
+
+    def analyze(frame, *, warmup, now):
+        assert warmup == 200
+        source = frame.attrs["fixture_source"].copy()
+        stamp = frame.dt.iloc[-1].isoformat()
+        symbol = frame.symbol.iloc[-1]
+        event = {"symbol": symbol, "rule": "buy2", "bar_end": stamp,
+                 "origin_time": stamp, "message": "合成机制信号，仅用于HTTP传输测试",
+                 "evidence": {"fixture_only": True, "close": 10.2, "source": source.copy()}}
+        return {"symbol": symbol, "asof": stamp, "last_five_asof": stamp,
+                "bars30_count": 201, "status": "ready", "source": source,
+                "quality": quality["value"].copy(), "snapshot": {"close": 10.2},
+                "events": [event]}
+
+    monitor = LocalMonitor(app.universe, app.store, analyzer=analyze,
+                           now=lambda: clock["now"], online_fetcher=fetch, background=False)
+    app.server.monitor = monitor
+    values = vars(app).copy()
+    values.update(monitor=monitor, clock=clock, failure=failure, quality=quality, fetch_calls=calls)
+    try:
+        yield SimpleNamespace(**values)
+    finally:
+        app.server.monitor = app.monitor
+        monitor.close()
+
+
+def configure_online(app):
+    missing_directory = app.source / "not-created"
+    config = {"data_source": "eastmoney", "source_dir": str(missing_directory),
+              "interval_seconds": 30, "symbols": ["600660.SH"], "rules": ["buy2"]}
+    response = app.request("/api/config", "POST", data=config)
+    assert response.status == 200 and response.json()["config"] == config
+    assert app.store.load_config() == config
+    return config
+
+
+def test_online_configuration_starts_without_local_lc5_directory(online_app):
+    config = configure_online(online_app)
+    assert online_app.request("/api/start", "POST", data={}).status == 200
+    status = online_app.request("/api/status").json()
+    assert status["running"] is True and status["config"] == config
+    assert not online_app.fetch_calls  # HTTP start does not synthesize an immediate scan.
+    assert not (online_app.source / "not-created").exists()
+    assert online_app.request("/api/stop", "POST", data={}).status == 200
+    assert online_app.request("/api/status").json()["running"] is False
+
+
+def test_online_http_first_scan_is_silent_and_new_signal_retains_source(online_app):
+    configure_online(online_app)
+    assert online_app.request("/api/start", "POST", data={}).status == 200
+    assert online_app.monitor.scan_once()
+    initial = online_app.request("/api/status").json()
+    stock = next(row for row in initial["stocks"] if row["symbol"] == "600660.SH")
+    assert stock["state"] == "ready" and stock["source"]["provider"] == "fixture-only"
+    assert online_app.request("/api/alerts").json() == {"alerts": [], "last_id": 0}
+    online_app.clock["now"] = datetime(2026, 11, 9, 10, 35, tzinfo=CHINA)
+    assert online_app.monitor.scan_once()
+    response = online_app.request("/api/alerts").json()
+    assert len(response["alerts"]) == 1
+    row = response["alerts"][0]
+    assert row["symbol"] == "600660.SH" and row["rule"] == "buy2" and row["is_test"] is False
+    assert row["bar_end"] == datetime(2026, 11, 9, 10, 30, tzinfo=CHINA).isoformat()
+    assert row["evidence"]["fixture_only"] is True  # Explicitly not a real-market claim.
+    latest = online_app.request("/api/status").json()
+    stock = next(row for row in latest["stocks"] if row["symbol"] == "600660.SH")
+    assert row["evidence"]["source"] == stock["source"]
+    assert online_app.monitor.scan_once()
+    assert online_app.request("/api/alerts").json() == response
+
+
+def test_online_network_failure_changes_status_and_does_not_create_signal(online_app):
+    configure_online(online_app)
+    assert online_app.request("/api/start", "POST", data={}).status == 200
+    assert online_app.monitor.scan_once()
+    online_app.clock["now"] = datetime(2026, 11, 9, 10, 35, tzinfo=CHINA)
+    online_app.failure["value"] = TimeoutError("合成网络超时，仅用于测试")
+    assert online_app.monitor.scan_once()
+    status = online_app.request("/api/status").json()
+    stock = next(row for row in status["stocks"] if row["symbol"] == "600660.SH")
+    assert stock["state"] == "network_error" and "合成网络超时" in stock["error"]
+    assert online_app.request("/api/alerts").json() == {"alerts": [], "last_id": 0}
+
+
+def test_online_missing_explicit_quality_permission_is_not_a_signal(online_app):
+    configure_online(online_app)
+    assert online_app.request("/api/start", "POST", data={}).status == 200
+    assert online_app.monitor.scan_once()
+    online_app.clock["now"] = datetime(2026, 11, 9, 10, 35, tzinfo=CHINA)
+    online_app.quality["value"] = {}
+    assert online_app.monitor.scan_once()
+    stock = next(row for row in online_app.request("/api/status").json()["stocks"]
+                 if row["symbol"] == "600660.SH")
+    assert stock["state"] != "ready"
+    assert online_app.request("/api/alerts").json() == {"alerts": [], "last_id": 0}
+
+
+@pytest.mark.parametrize("payload", [{}, {"symbol": None}, {"symbol": 600660},
+    {"symbol": "000001.SH"}, {"symbol": "399300.SZ"}, {"symbol": "512480.SH"},
+    {"symbol": "https://external.invalid/"}, {"symbol": "600660.SH/../../"}])
+def test_market_probe_rejects_missing_or_nonpool_symbols_before_network(app, monkeypatch, payload):
+    import alerts.online
+
+    calls = []
+
+    def forbidden_fetch(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("An invalid market-probe request must not contact a provider")
+
+    monkeypatch.setattr(alerts.online, "fetch_five_minute", forbidden_fetch)
+    response = app.request("/api/check-market", "POST", data=payload)
+    assert response.status == 400 and response.json()["ok"] is False
+    assert calls == []
+    assert app.store.max_id() == 0
+
+
+def test_market_probe_returns_snapshot_and_source_without_creating_alert(app, monkeypatch):
+    calls = []
+    source = {"kind": "synthetic-http-fixture", "provider": "fixture-only",
+              "label": "合成连通性测试，不是实际行情"}
+    market = {"symbol": "600660.SH", "asof": "2026-11-09T10:00:00+08:00",
+              "last_five_asof": "2026-11-09T10:00:00+08:00", "bars30_count": 201,
+              "status": "ready", "snapshot": {"close": 10.2, "buy2_state": True},
+              "quality": {"alertable": True}, "source": source, "fresh": True}
+
+    def probe(symbol, now=None):
+        calls.append(symbol)
+        return market.copy()
+
+    monkeypatch.setattr(desktop_alerts, "check_online_market", probe)
+    response = app.request("/api/check-market", "POST", data={"symbol": "600660.SH"})
+    assert response.status == 200
+    assert response.json() == {"ok": True, **market}
+    assert calls == ["600660.SH"]
+    assert app.store.max_id() == 0
+    assert app.request("/api/alerts").json() == {"alerts": [], "last_id": 0}
+    assert app.monitor.status()["running"] is False
+
+
+def test_market_probe_failure_is_readable_and_does_not_create_alert(app, monkeypatch):
+    def probe(symbol, now=None):
+        raise ValueError("合成接口无数据，仅测试错误返回")
+
+    monkeypatch.setattr(desktop_alerts, "check_online_market", probe)
+    response = app.request("/api/check-market", "POST", data={"symbol": "600660.SH"})
+    assert response.status == 400 and "合成接口无数据" in response.json()["error"]
+    assert app.store.max_id() == 0 and app.monitor.status()["running"] is False
 
 
 def test_test_notification_is_persisted_and_cannot_be_mistaken_for_stock_signal(app):

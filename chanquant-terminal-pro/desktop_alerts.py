@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 
 ROOT=Path(__file__).resolve().parent
 APP_ID='chanquant-local-stock-alerts-v1'
+APP_VERSION='1.1.0'
 
 
 def load_universe():
@@ -85,7 +86,7 @@ class AlertHandler(BaseHTTPRequestHandler):
         parsed=urllib.parse.urlparse(self.path)
         if not self._valid_host():self._json({'ok':False,'error':'只允许本机访问'},403);return
         if parsed.path=='/api/health':
-            self._json({'app':APP_ID,'version':'1.0','read_only':True});return
+            self._json({'app':APP_ID,'version':APP_VERSION,'read_only':True});return
         if parsed.path in {'/','/index.html'}:
             template=(ROOT/'alerts/web.html').read_text(encoding='utf-8')
             if template.count('__CQ_TOKEN__')!=1:
@@ -156,6 +157,11 @@ class AlertHandler(BaseHTTPRequestHandler):
                 self.server.monitor.pause();self._json({'ok':True});return
             if path=='/api/test-alert':
                 self._json({'ok':True,'alert':self.server.monitor.test_alert()});return
+            if path=='/api/check-market':
+                symbol=data.get('symbol')
+                if set(data)!={'symbol'} or symbol not in {s['symbol'] for s in self.server.universe}:
+                    raise ValueError('请选择股票池内的个股检查行情连接')
+                self._json({'ok':True,**check_online_market(symbol)});return
             if path=='/api/shutdown':
                 self.server.monitor.pause();self._json({'ok':True})
                 threading.Thread(target=self.server.shutdown,daemon=True).start();return
@@ -172,9 +178,34 @@ def self_check():
     from alerts.signal_engine import RULE_LABELS
     from alerts.monitor import AlertStore,LocalMonitor
     from czsc import CZSC,BarGenerator,CzscSignals,format_standard_kline
+    from alerts.online import fetch_five_minute
     version=importlib.metadata.version('czsc')
-    return {'app':APP_ID,'stocks':len(load_universe()),'czsc_version':version,'rules':RULE_LABELS,
+    return {'app':APP_ID,'version':APP_VERSION,'stocks':len(load_universe()),'czsc_version':version,'rules':RULE_LABELS,
+            'sources':{'tdx_local':'通达信本地5分钟文件','eastmoney':'东方财富公开5分钟行情'},
             'mode':'read-only alerts; no broker or order routing'}
+
+
+def _china_now():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo('Asia/Shanghai'))
+
+
+def check_online_market(symbol,now=None):
+    """Fetch actual source data without persisting or notifying any signal."""
+    from alerts.online import fetch_five_minute
+    from alerts.signal_engine import analyze_five_minute
+    from alerts.monitor import latest_completed_bar,_local_stamp
+    if symbol not in {stock['symbol'] for stock in load_universe()}:
+        raise ValueError('请选择股票池内的个股检查行情连接')
+    current=_local_stamp(now) if now is not None else _china_now()
+    frame=fetch_five_minute(symbol,now=current)
+    analysis_now=current if now is not None else _china_now()
+    result=analyze_five_minute(frame,warmup=200,now=analysis_now)
+    final_now=current if now is not None else _china_now()
+    expected=latest_completed_bar(final_now)
+    asof=_local_stamp(result['asof']) if result.get('asof') else None
+    return {key:result.get(key) for key in ('symbol','asof','last_five_asof','bars30_count','status','snapshot','quality','source')}|{'fresh':asof is not None and asof==expected,'required_bars30':201}
 
 
 def main(argv=None):
@@ -183,8 +214,16 @@ def main(argv=None):
     parser.add_argument('--no-browser',action='store_true')
     parser.add_argument('--data-dir',type=Path,default=ROOT/'app_data')
     parser.add_argument('--self-check',action='store_true')
+    parser.add_argument('--check-online',metavar='SYMBOL',help='只读检查联网行情，例如600660.SH，不创建预警')
     args=parser.parse_args(argv)
     if args.self_check:print(json.dumps(self_check(),ensure_ascii=False,indent=2));return 0
+    if args.check_online:
+        try:
+            print(json.dumps({'ok':True,**check_online_market(args.check_online)},ensure_ascii=False,indent=2,default=str))
+            return 0
+        except (OSError,ValueError,RuntimeError) as exc:
+            print(json.dumps({'ok':False,'error':str(exc)},ensure_ascii=False))
+            return 1
     from alerts.monitor import AlertStore,LocalMonitor
     universe=load_universe();args.data_dir.mkdir(parents=True,exist_ok=True)
     store=AlertStore(args.data_dir/'alerts.sqlite3');monitor=LocalMonitor(universe,store)
@@ -197,6 +236,8 @@ def main(argv=None):
             try:
                 response=json.loads(urllib.request.urlopen(url+'/api/health',timeout=2).read())
                 if response.get('app')==APP_ID:
+                    if response.get('version')!=APP_VERSION:
+                        raise SystemExit('旧版预警助手仍在运行。请先在原页面点击“退出程序”并关闭原启动窗口，再启动新版。')
                     if not args.no_browser:webbrowser.open(url)
                     print('预警助手已在运行，已打开原窗口。');return 0
             except (OSError,ValueError):pass

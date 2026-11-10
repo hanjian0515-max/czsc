@@ -19,11 +19,20 @@ function check(name, condition = true) { assert.ok(condition, name); checks.push
 const serverCode = `
 from pathlib import Path
 import sys
+import desktop_alerts as app
 from desktop_alerts import AlertHTTPServer, load_universe
 from alerts.monitor import AlertStore, LocalMonitor
+from alerts.online import OnlineNetworkError
 universe=load_universe()
 store=AlertStore(Path(sys.argv[1])/'alerts.sqlite3')
-monitor=LocalMonitor(universe,store)
+def synthetic_transport_failure(symbol,now=None):
+    raise OnlineNetworkError('SYNTHETIC offline test: no market connection was made')
+def synthetic_probe(symbol,now=None):
+    return dict(symbol=symbol,asof=None,last_five_asof=None,bars30_count=0,
+        status='insufficient_history',snapshot={},quality={'alertable':False},
+        source={'provider':'synthetic_contract_fixture','label':'SYNTHETIC test fixture; not market data'},fresh=False)
+app.check_online_market=synthetic_probe
+monitor=LocalMonitor(universe,store,online_fetcher=synthetic_transport_failure)
 server=AlertHTTPServer(('127.0.0.1',0),monitor,store,universe)
 print(server.server_address[1],flush=True)
 try: server.serve_forever(poll_interval=.1)
@@ -112,6 +121,7 @@ let browser;
   await page.locator('#sound-enabled').check();
   await page.locator('#test-alert').click();
   await page.waitForFunction(()=>document.querySelectorAll('[data-alert-id]').length===1);
+  await page.waitForFunction(()=>window.__notificationCalls.length===1);
   check('test reminder is explicitly marked non-real',(await page.locator('#alert-list').innerText()).includes('非真实信号'));
   check('notification transport invoked once for new test event',await page.evaluate(()=>window.__notificationCalls.length===1));
   await page.locator('#refresh-now').click();
@@ -140,9 +150,25 @@ let browser;
   await page.locator('#test-alert').click();
   await Promise.all([page.locator('#refresh-now').click(),peer.locator('#refresh-now').click()]);
   await peer.waitForFunction(()=>document.querySelectorAll('[data-alert-id]').length===2);
+  await page.waitForFunction(()=>{try{return JSON.parse(localStorage.getItem('cq-alert-delivery')).notice>=2;}catch{return false;}});
   const calls=await Promise.all([page.evaluate(()=>({notices:window.__notificationCalls.length,sound:window.__beeps})),peer.evaluate(()=>({notices:window.__notificationCalls.length,sound:window.__beeps}))]);
   check('two tabs deliver one notification and one sound per event',calls.reduce((sum,x)=>sum+x.notices,0)===1&&calls.reduce((sum,x)=>sum+x.sound,0)===1);
   await peer.close();
+  await page.locator('#data-source').selectOption('eastmoney');
+  check('online mode hides and disables LC5 directory inputs',!(await page.locator('#local-source-fields').isVisible())&&await page.locator('#source-dir').isDisabled());
+  await page.screenshot({path:path.join(out,'desktop-online.png'),fullPage:true});
+  await page.locator('#check-market').click();
+  await page.waitForFunction(()=>document.querySelector('#market-check-result').textContent.includes('SYNTHETIC test fixture'));
+  check('connection check displays provenance and creates no event',await page.locator('[data-alert-id]').count()===2&&(await page.locator('#market-check-result').innerText()).includes('不创建预警'));
+  await page.locator('#save-settings').click();
+  await page.locator('#start-monitor').click();
+  await page.locator('#refresh-now').click();
+  await page.waitForFunction(()=>Array.from(document.querySelectorAll('.stock-row')).find(x=>x.dataset.symbol==='600660.SH')?.textContent.includes('联网失败'));
+  check('failed online source reports network error without fabricating signals',await page.locator('[data-alert-id]').count()===2&&await page.locator('#latest-bar').innerText()==='—');
+  await page.locator('#stop-monitor').click();
+  await page.reload();
+  await page.waitForFunction(()=>document.querySelectorAll('#stock-list .stock-row').length===43);
+  check('online source selection persists across reload',await page.locator('#data-source').inputValue()==='eastmoney');
   const mobile=await context.newPage();
   await mobile.setViewportSize({width:390,height:844});
   mobile.on('pageerror',error=>pageErrors.push(String(error)));
@@ -157,7 +183,7 @@ let browser;
   check('exit button shuts down local application');
   check('no page JavaScript errors',pageErrors.length===0);
   check('no external browser requests',externalRequests.length===0);
-  const result={checks:checks.length,passed:checks,pageErrors,externalRequests,notificationTransport:'recorded in-page; native Windows delivery not tested',marketData:'none; missing-file state and explicit TEST reminder only'};
+  const result={checks:checks.length,passed:checks,pageErrors,externalRequests,notificationTransport:'recorded in-page; native Windows delivery not tested',marketData:'no live data; missing-file state, TEST reminder, and explicitly synthetic offline network fixtures'};
   fs.writeFileSync(path.join(out,'browser-validation.json'),JSON.stringify(result,null,2));
   console.log(JSON.stringify(result,null,2));
 })().catch(error=>{console.error(error.stack||error);process.exitCode=1;}).finally(async()=>{

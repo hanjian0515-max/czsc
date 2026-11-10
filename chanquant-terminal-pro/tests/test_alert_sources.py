@@ -41,6 +41,7 @@ def test_market_names_and_original_units_are_preserved(tmp_path, name, symbol):
     assert df.attrs["price_basis"] == "raw"
     assert df.attrs["total_records"] == df.attrs["loaded_records"] == 1
     assert df.attrs["truncated"] is False
+    assert df.attrs["snapshot_sha256"] == before
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before
 
 
@@ -58,6 +59,7 @@ def test_tail_selection_reads_only_requested_records(tmp_path):
     assert df.vol.tolist() == [6, 7, 8]
     assert df.attrs["total_records"] == 8 and df.attrs["loaded_records"] == 3
     assert df.attrs["truncated"] is True
+    assert df.attrs["snapshot_sha256"] == hashlib.sha256(payload[-3 * 32:]).hexdigest()
 
 
 def test_tail_selection_does_not_hide_corrupt_trailing_bytes(tmp_path):

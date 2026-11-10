@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from numbers import Integral
 from datetime import datetime
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -198,5 +199,6 @@ def read_lc5(path, max_records=12_000) -> pd.DataFrame:
     result = pd.DataFrame.from_records(rows, columns=_COLUMNS)
     result.attrs.update(total_records=total, loaded_records=loaded, truncated=loaded < total,
                         source_path=str(path), source_mtime_ns=before.st_mtime_ns,
+                        snapshot_sha256=hashlib.sha256(content).hexdigest(),
                         price_basis="raw", volume_unit="source", source_format="TDX-LC5-32")
     return result

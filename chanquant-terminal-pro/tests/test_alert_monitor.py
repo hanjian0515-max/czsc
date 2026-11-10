@@ -12,6 +12,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+import pandas as pd
 
 from alerts.monitor import AlertStore, CHINA, LocalMonitor, RULES, latest_completed_bar
 
@@ -292,7 +293,7 @@ def test_gap_repair_same_bar_does_not_replay_and_next_complete_bar_can_alert(har
     h.analyses["600660.SH"]["quality"] = {"alertable": True}
     h.monitor.scan_once()
     assert stock(h.monitor)["state"] == "ready" and not h.store.events_after()
-    h.advance("2026-11-09T11:05:00", "2026-11-09T11:00:00", quality={})
+    h.advance("2026-11-09T11:05:00", "2026-11-09T11:00:00", quality={"alertable": True})
     h.monitor.scan_once()
     assert len(h.store.events_after()) == 1
 
@@ -752,3 +753,314 @@ def test_custom_injected_sources_remain_uncached_even_if_paths_exist(harness):
     h.monitor.scan_once()
     assert len([c for c in h.calls if c[0] == "analyze"]) == 2
     assert not h.monitor._analysis_cache
+
+
+@pytest.fixture
+def online_monitor(tmp_path):
+    """Synthetic provider/analyzer mechanisms; no real quote or API is claimed."""
+    state = SimpleNamespace(now=stamp("2026-11-09T10:05:00"), fetches=[], analyses=[],
+                            fetch_error=None, empty=False, result=analysis(),
+                            store=AlertStore(tmp_path / "app" / "online.sqlite3"))
+    state.source = {"kind": "eastmoney", "label": "synthetic provider mechanism fixture",
+                    "provider": "eastmoney", "response_sha256": "0" * 64}
+    state.result["source"] = deepcopy(state.source)
+
+    def frame(symbol):
+        return pd.DataFrame([{"symbol": symbol, "dt": state.now.replace(tzinfo=None),
+                              "open": 12.4, "high": 12.6, "low": 12.3, "close": 12.5,
+                              "vol": 1000., "amount": 12500.}])
+
+    def fetcher(symbol, *, now):
+        state.fetches.append((symbol, now))
+        if state.fetch_error:
+            raise state.fetch_error
+        return frame(symbol).iloc[:0] if state.empty else frame(symbol)
+
+    def analyzer(value, *, warmup, now):
+        state.analyses.append((len(value), warmup, now))
+        return deepcopy(state.result)
+
+    def forbid_local(*args, **kwargs):
+        raise AssertionError("联网模式不应触碰本地行情目录")
+
+    state.fetcher, state.analyzer, state.frame = fetcher, analyzer, frame
+    state.monitor = LocalMonitor(UNIVERSE, state.store, analyzer=analyzer,
+        reader=forbid_local, discoverer=forbid_local, online_fetcher=fetcher,
+        now=lambda: state.now, background=False)
+    state.monitor.configure({"data_source": "eastmoney", "source_dir": str(tmp_path / "absent"),
+                             "symbols": ["600660.SH"]})
+
+    def advance(at="2026-11-09T10:35:00", asof="2026-11-09T10:30:00", **extra):
+        state.now = stamp(at)
+        state.result = analysis(asof, source=deepcopy(state.source), **extra)
+
+    state.advance = advance
+    yield state
+    state.monitor.close()
+
+
+def test_legacy_saved_configuration_migrates_to_local_source_without_warning(tmp_path):
+    store = AlertStore(tmp_path / "config.sqlite3")
+    legacy = {"source_dir": "D:\\old_tdx\\vipdoc", "interval_seconds": 30,
+              "symbols": ["600660.SH"], "rules": ["buy3"]}
+    store.save_config(legacy)
+    monitor = LocalMonitor(UNIVERSE, store, background=False)
+    try:
+        assert monitor.status()["config"] == {**legacy, "data_source": "tdx_local"}
+        assert monitor.status()["config_warning"] is None
+        monitor.configure({"interval_seconds": 60})
+        assert store.load_config()["data_source"] == "tdx_local"
+    finally:
+        monitor.close()
+
+
+@pytest.mark.parametrize("source", ["", "unknown", None, 1, [], {}])
+def test_source_configuration_rejects_unknown_providers(harness, source):
+    before = harness.monitor.status()["config"]
+    with pytest.raises(ValueError, match="行情来源"):
+        harness.monitor.configure({"data_source": source})
+    assert harness.monitor.status()["config"] == before
+
+
+def test_online_source_starts_without_local_folder_and_initial_scan_is_silent(online_monitor):
+    h = online_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "ready"
+    assert stock(h.monitor)["source"] == h.source
+    assert len(h.fetches) == len(h.analyses) == 1
+    assert h.fetches[0] == ("600660.SH", h.now)
+    assert h.analyses[0][1:] == (200, h.now)
+    assert not h.store.events_after()
+    # The exposed source is copied, never mutable shared provider state.
+    public = stock(h.monitor)
+    public["source"]["provider"] = "tampered"
+    assert stock(h.monitor)["source"] == h.source
+
+
+def test_online_fetches_each_scan_and_emits_only_new_current_closed_event_once(online_monitor):
+    h = online_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance()
+    h.result["events"][0]["evidence"]["source"] = deepcopy(h.source)
+    h.monitor.scan_once()
+    h.monitor.scan_once()
+    rows = h.store.events_after()
+    assert len(rows) == 1 and rows[0]["is_test"] is False
+    assert rows[0]["bar_end"] == "2026-11-09T10:30:00+08:00"
+    assert rows[0]["evidence"]["source"] == h.source
+    assert len(h.fetches) == 3 and not h.monitor._analysis_cache
+
+
+@pytest.mark.parametrize("error,state", [(TimeoutError("连接超时"), "network_error"),
+    (OSError("接口不可达"), "network_error"), (ValueError("无效行情"), "data_error"),
+    (RuntimeError("分析不可用"), "data_error")])
+def test_online_failures_remove_usable_snapshot_and_do_not_fall_back(online_monitor, error, state):
+    h = online_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    assert stock(h.monitor)["snapshot"]
+    h.fetch_error = error
+    h.advance()
+    h.monitor.scan_once()
+    current = stock(h.monitor)
+    assert current["state"] == state and str(error) in current["error"]
+    assert current["asof"] is None
+    assert current["snapshot"] == current["quality"] == current["source"] == {}
+    assert len(h.analyses) == 1 and not h.store.events_after()
+    h.fetch_error = None
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "ready" and len(h.store.events_after()) == 1
+
+
+def test_online_initial_failure_then_recovery_builds_silent_baseline(online_monitor):
+    h = online_monitor
+    h.fetch_error = TimeoutError("首次联网失败")
+    h.monitor.start()
+    h.monitor.scan_once()
+    assert not h.monitor._baselines and not h.store.events_after()
+    h.fetch_error = None
+    h.advance()
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "ready" and not h.store.events_after()
+
+
+def test_online_empty_frame_is_not_analyzed_or_replaced_by_cached_quotes(online_monitor):
+    h = online_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.empty = True
+    h.advance()
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "data_error"
+    assert "为空" in stock(h.monitor)["error"]
+    assert len(h.analyses) == 1 and not h.store.events_after()
+
+
+@pytest.mark.parametrize("quality", [None, {}, {"alertable": False},
+    {"alertable": None}, {"alertable": 1}, {"alertable": "true"}])
+def test_online_requires_explicit_boolean_quality_permission(online_monitor, quality):
+    h = online_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance(quality=quality)
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "data_gap" and not h.store.events_after()
+    # Repairing the same bar cannot replay a formerly blocked signal.
+    h.result["quality"] = {"alertable": True}
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "ready" and not h.store.events_after()
+
+
+@pytest.mark.parametrize("at,asof,expected", [
+    ("2026-11-09T10:35:00", "2026-11-09T10:00:00", "stale"),
+    ("2026-11-09T10:35:00", "2026-11-09T11:00:00", "future_data"),
+    ("2026-11-10T10:05:00", "2026-11-09T15:00:00", "stale"),
+    ("2026-11-09T09:59:00", "2026-11-09T09:30:00", "data_regressed")])
+def test_online_keeps_the_same_session_freshness_gate(online_monitor, at, asof, expected):
+    h = online_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance(at, asof)
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == expected and not h.store.events_after()
+
+
+def test_online_wrong_result_symbol_cannot_emit_for_selected_stock(online_monitor):
+    h = online_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance(symbol="300308.SZ")
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "data_error"
+    assert not h.store.events_after() and not stock(h.monitor)["snapshot"]
+
+
+def test_switching_source_resets_baseline_and_first_online_scan_is_silent(harness):
+    h = harness
+    original_analyzer = h.monitor._analyzer
+
+    def analyzer(value, **kwargs):
+        return original_analyzer(value.symbol.iloc[0] if isinstance(value, pd.DataFrame) else value,
+                                 **kwargs)
+
+    h.monitor._analyzer = analyzer
+    h.monitor._online_fetcher = lambda symbol, *, now: pd.DataFrame([{"symbol": symbol}])
+    h.monitor.start()
+    h.monitor.scan_once()
+    assert h.monitor._baselines
+    h.monitor.configure({"data_source": "eastmoney", "source_dir": ""})
+    assert not h.monitor._baselines and not h.monitor._analysis_cache
+    h.advance()
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "ready" and not h.store.events_after()
+    h.advance("2026-11-09T11:05:00", "2026-11-09T11:00:00")
+    h.monitor.scan_once()
+    assert len(h.store.events_after()) == 1
+    h.monitor.configure({"data_source": "tdx_local", "source_dir": str(h.source)})
+    h.monitor.scan_once()
+    assert len(h.store.events_after()) == 1
+
+
+def test_pause_during_online_fetch_prevents_analysis_and_inflight_alert(online_monitor):
+    h = online_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance()
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_fetch(symbol, *, now):
+        entered.set()
+        assert release.wait(3)
+        return h.frame(symbol)
+
+    h.monitor._online_fetcher = slow_fetch
+    worker = threading.Thread(target=h.monitor.scan_once)
+    worker.start()
+    assert entered.wait(3)
+    h.monitor.pause()
+    release.set()
+    worker.join(3)
+    assert not worker.is_alive()
+    assert stock(h.monitor)["state"] == "paused"
+    assert len(h.analyses) == 1 and not h.store.events_after()
+
+
+def test_one_online_stock_failure_does_not_stop_other_selected_stocks(online_monitor):
+    h = online_monitor
+    h.monitor.configure({"symbols": [s["symbol"] for s in UNIVERSE]})
+
+    def fetch(symbol, *, now):
+        if symbol == "600660.SH":
+            raise TimeoutError("单股请求失败")
+        return h.frame(symbol)
+
+    def analyze_frame(frame, **kwargs):
+        return analysis(symbol=frame.symbol.iloc[0], source=deepcopy(h.source))
+
+    h.monitor._online_fetcher = fetch
+    h.monitor._analyzer = analyze_frame
+    h.monitor.start()
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "network_error"
+    assert stock(h.monitor, "300308.SZ")["state"] == "ready"
+    assert not h.store.events_after()
+
+
+def test_online_request_crossing_a_new_close_uses_publish_time_freshness(online_monitor):
+    h = online_monitor
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance("2026-11-09T10:29:59", "2026-11-09T10:00:00")
+
+    def delayed_fetch(symbol, *, now):
+        assert now == stamp("2026-11-09T10:29:59")
+        h.now = stamp("2026-11-09T10:30:01")
+        return h.frame(symbol)
+
+    h.monitor._online_fetcher = delayed_fetch
+    h.monitor.scan_once()
+    assert h.analyses[-1][2] == h.now
+    assert stock(h.monitor)["state"] == "stale"
+    assert stock(h.monitor)["last_scan"] == h.now.isoformat()
+    assert not h.store.events_after()
+
+
+def test_online_request_crossing_midnight_cannot_alert_the_previous_date(online_monitor):
+    h = online_monitor
+    h.advance("2026-11-09T14:35:00", "2026-11-09T14:30:00")
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance("2026-11-09T23:59:59", "2026-11-09T15:00:00")
+
+    def delayed_fetch(symbol, *, now):
+        assert now == stamp("2026-11-09T23:59:59")
+        h.now = stamp("2026-11-10T00:00:01")
+        return h.frame(symbol)
+
+    h.monitor._online_fetcher = delayed_fetch
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "stale"
+    assert h.monitor.status()["last_cycle"] == h.now.isoformat()
+    assert not h.store.events_after()
+
+
+def test_local_slow_analysis_uses_actual_publish_time_and_drops_old_slot(harness):
+    h = harness
+    h.monitor.start()
+    h.monitor.scan_once()
+    h.advance("2026-11-09T10:59:59", "2026-11-09T10:30:00")
+    original = h.monitor._analyzer
+
+    def delayed_analysis(*args, **kwargs):
+        result = original(*args, **kwargs)
+        h.now = stamp("2026-11-09T11:00:01")
+        return result
+
+    h.monitor._analyzer = delayed_analysis
+    h.monitor.scan_once()
+    assert stock(h.monitor)["state"] == "stale"
+    assert stock(h.monitor)["last_scan"] == h.now.isoformat()
+    assert h.monitor.status()["last_cycle"] == h.now.isoformat()
+    assert not h.store.events_after()

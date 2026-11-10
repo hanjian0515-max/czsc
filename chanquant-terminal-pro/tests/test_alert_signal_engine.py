@@ -176,3 +176,87 @@ def test_native_api_prefix_causality_and_json_safe_result():
     assert a["quality"]["alertable"]
     json.dumps(a,allow_nan=False)
     assert_frame_equal(frame,original)
+
+
+def synthetic_signal_records(bars):
+    # Deliberate state-machine fixture, never used as a market-data provider.
+    return [record(row.dt, index+1, state2=index==1, state3=index==2)
+            for index,row in enumerate(bars.itertuples())]
+
+
+@pytest.mark.parametrize("state", ["no_complete_bar", "warming_up", "ready"])
+@pytest.mark.parametrize("origin", ["local", "online"])
+def test_source_survives_all_analysis_states_and_each_event(monkeypatch,state,origin):
+    frame = five_frame(1)
+    if origin == "local":
+        metadata = {"source_path": r"D:\tdx\vipdoc\sh\fzline\sh600660.lc5",
+                    "source_mtime_ns": 1735800000000000000, "source_format": "TDX-LC5-32",
+                    "price_basis": "raw", "loaded_records": 48, "total_records": 144,
+                    "truncated": True, "snapshot_sha256": "a"*64}
+        identity = {"kind": "tdx_lc5", "label": "通达信本地5分钟文件"}
+    else:
+        metadata = {"provider": "public-five-minute-provider", "price_basis": "raw",
+                    "source_url": "https://quotes.example.test/kline?symbol=600660.SH",
+                    "retrieved_at": "2025-01-02T15:01:00+08:00", "response_sha256": "b"*64}
+        identity = {"kind": metadata["provider"], "label": metadata["provider"]}
+    if state == "no_complete_bar":
+        frame = frame.iloc[:5].copy()
+    frame.attrs = metadata.copy()
+    monkeypatch.setattr(engine, "_native_records", synthetic_signal_records)
+    result = engine.analyze_five_minute(frame, warmup=200 if state=="warming_up" else 1)
+    assert result["source"] == {**metadata, **identity}
+    assert result["status"] == ("ready" if state=="ready" else "insufficient_history")
+    if state == "ready":
+        assert {event["rule"] for event in result["events"]} == {"buy2", "buy3", "buy23_day"}
+        assert all(event["evidence"]["source"] == result["source"] for event in result["events"])
+    else:
+        assert result["events"] == []
+    json.dumps(result,allow_nan=False)
+
+
+def test_unknown_source_is_explicit_without_changing_signal_qualification(monkeypatch):
+    monkeypatch.setattr(engine, "_native_records", synthetic_signal_records)
+    result = engine.analyze_five_minute(five_frame(1), warmup=1)
+    assert result["source"] == {"kind": "unrecorded", "label": "来源未记录"}
+    assert result["quality"]["alertable"] is True
+    assert result["events"]
+    assert all(event["evidence"]["source"] == result["source"] for event in result["events"])
+
+
+def test_source_does_not_expose_arbitrary_attrs_or_nested_credentials(monkeypatch):
+    frame = five_frame(1)
+    frame.attrs = {"token": "DO_NOT_PERSIST_TOKEN", "api_key": "DO_NOT_PERSIST_API_KEY",
+                   "credentials": {"password": "DO_NOT_PERSIST_PASSWORD"},
+                   "provider": {"token": "DO_NOT_PERSIST_NESTED_PROVIDER"},
+                   "source_url": ["DO_NOT_PERSIST_NESTED_URL"],
+                   "loaded_records": True, "truncated": "DO_NOT_PERSIST_INVALID_BOOLEAN"}
+    monkeypatch.setattr(engine, "_native_records", synthetic_signal_records)
+    result = engine.analyze_five_minute(frame, warmup=1)
+    serialized = json.dumps(result,ensure_ascii=False,allow_nan=False)
+    assert "DO_NOT_PERSIST" not in serialized
+    assert result["source"] == {"kind": "unrecorded", "label": "来源未记录"}
+
+
+def test_source_and_events_are_independent_of_input_and_each_other(monkeypatch):
+    frame = five_frame(1)
+    frame.attrs = {"provider": "recorded-provider", "response_sha256": "c"*64,
+                   "private_state": {"token": "unchanged-input-only"}}
+    original = copy.deepcopy(frame)
+    monkeypatch.setattr(engine, "_native_records", synthetic_signal_records)
+    result = engine.analyze_five_minute(frame, warmup=1)
+    assert_frame_equal(frame,original)
+    assert frame.attrs == original.attrs
+    result["source"]["provider"] = "changed-top-level-result"
+    result["events"][0]["evidence"]["source"]["provider"] = "changed-single-event"
+    assert frame.attrs == original.attrs
+    assert result["events"][1]["evidence"]["source"]["provider"] == "recorded-provider"
+
+
+def test_source_numpy_counts_remain_json_safe():
+    frame = five_frame(1)
+    frame.attrs = {"source_format": "TDX-LC5-32", "loaded_records": engine.np.int64(48),
+                   "truncated": engine.np.bool_(False)}
+    result = engine.analyze_five_minute(frame)
+    assert result["source"]["loaded_records"] == 48
+    assert result["source"]["truncated"] is False
+    json.dumps(result,allow_nan=False)

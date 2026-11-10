@@ -1,5 +1,5 @@
 {
-  "checks": 23,
+  "checks": 27,
   "passed": [
     "43 stocks and four rules load from actual backend",
     "unconfigured data shows no invented prices",
@@ -20,6 +20,10 @@
     "saved sound preference is restored",
     "a user gesture unlocks saved sound preference after reload",
     "two tabs deliver one notification and one sound per event",
+    "online mode hides and disables LC5 directory inputs",
+    "connection check displays provenance and creates no event",
+    "failed online source reports network error without fabricating signals",
+    "online source selection persists across reload",
     "mobile layout has no page overflow",
     "exit button shuts down local application",
     "no page JavaScript errors",
@@ -28,5 +32,5 @@
   "pageErrors": [],
   "externalRequests": [],
   "notificationTransport": "recorded in-page; native Windows delivery not tested",
-  "marketData": "none; missing-file state and explicit TEST reminder only"
+  "marketData": "no live data; missing-file state, TEST reminder, and explicitly synthetic offline network fixtures"
 }
