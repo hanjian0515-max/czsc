@@ -1,0 +1,164 @@
+{
+  "desktop": {
+    "title": "ChanQuant · 66 标的市场观察台",
+    "inputs": [
+      {
+        "id": "search",
+        "placeholder": "搜索代码、名称或主题"
+      }
+    ],
+    "buttons": [
+      {
+        "text": "全部观察标的66",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "宏观宽基9",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "科技进攻22",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "新能源与电网10",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "周期与资源18",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "消费与防守7",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "☆ 我的关注0",
+        "aria": null,
+        "id": "favorite-filter"
+      },
+      {
+        "text": "导出名单",
+        "aria": null,
+        "id": "export-csv"
+      },
+      {
+        "text": "分组看板",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "主题关系",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "全部66",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "股票43",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "ETF11",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "指数参考12",
+        "aria": null,
+        "id": ""
+      },
+      {
+        "text": "清空筛选",
+        "aria": null,
+        "id": "clear-filters"
+      },
+      {
+        "text": "☆",
+        "aria": "关注深证成指",
+        "id": ""
+      },
+      {
+        "text": "☆",
+        "aria": "关注上证指数",
+        "id": ""
+      },
+      {
+        "text": "☆",
+        "aria": "关注平均股价",
+        "id": ""
+      },
+      {
+        "text": "☆",
+        "aria": "关注通信ETF国泰",
+        "id": ""
+      },
+      {
+        "text": "☆",
+        "aria": "关注证券ETF国泰",
+        "id": ""
+      },
+      {
+        "text": "☆",
+        "aria": "关注特高压",
+        "id": ""
+      },
+      {
+        "text": "☆",
+        "aria": "关注通信设备",
+        "id": ""
+      },
+      {
+        "text": "☆",
+        "aria": "关注半导体",
+        "id": ""
+      },
+      {
+        "text": "☆",
+        "aria": "关注芯片ETF国泰",
+        "id": ""
+      },
+      {
+        "text": "☆",
+        "aria": "关注半导体ETF国联安",
+        "id": ""
+      }
+    ],
+    "scrollWidth": 1600,
+    "width": 1600,
+    "assets": 66
+  },
+  "mobile": {
+    "width": 390,
+    "scrollWidth": 390
+  },
+  "pageErrors": [],
+  "externalRequests": [],
+  "functionalChecks": [
+    "66 initial cards",
+    "code/name search",
+    "detail market suffix",
+    "copy action",
+    "favorite add/remove/persistence",
+    "empty state",
+    "11ETF filter",
+    "UTF8-BOM filtered CSV export",
+    "12reference filter",
+    "22tech filter",
+    "13tech stocks intersection",
+    "code sort",
+    "relationship view and detail jump",
+    "view visibility",
+    "mobile viewport and overflow"
+  ]
+}

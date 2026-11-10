@@ -1,0 +1,32 @@
+{
+  "checks": 23,
+  "passed": [
+    "43 stocks and four rules load from actual backend",
+    "unconfigured data shows no invented prices",
+    "all initial states translated",
+    "notification permission is not requested at load",
+    "search filters by Chinese stock name",
+    "stock detail has conditional research and no fake current data",
+    "selection changes are retained across filters",
+    "invalid scan interval gives readable error",
+    "missing local file reports error without signals",
+    "pause control stops monitor",
+    "permission request occurs only after user click",
+    "test reminder is explicitly marked non-real",
+    "notification transport invoked once for new test event",
+    "same event is not repeated",
+    "CSV downloads with UTF-8 BOM and explicit test row",
+    "reopening page displays history silently",
+    "saved sound preference is restored",
+    "a user gesture unlocks saved sound preference after reload",
+    "two tabs deliver one notification and one sound per event",
+    "mobile layout has no page overflow",
+    "exit button shuts down local application",
+    "no page JavaScript errors",
+    "no external browser requests"
+  ],
+  "pageErrors": [],
+  "externalRequests": [],
+  "notificationTransport": "recorded in-page; native Windows delivery not tested",
+  "marketData": "none; missing-file state and explicit TEST reminder only"
+}

@@ -1,0 +1,962 @@
+{
+  "items": [
+    {
+      "rank": 1,
+      "code": "399001",
+      "symbol": "399001.SZ",
+      "name": "深证成指",
+      "market": "SZ",
+      "type": "index",
+      "camp": "宏观宽基",
+      "tags": [
+        "深证成指",
+        "大盘基准"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 2,
+      "code": "000001",
+      "symbol": "000001.SH",
+      "name": "上证指数",
+      "market": "SH",
+      "type": "index",
+      "camp": "宏观宽基",
+      "tags": [
+        "上证综指",
+        "大盘基准"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 3,
+      "code": "880003",
+      "symbol": "880003.TDX",
+      "name": "平均股价",
+      "market": "TDX",
+      "type": "sector",
+      "camp": "宏观宽基",
+      "tags": [
+        "平均股价",
+        "市场广度观察"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 4,
+      "code": "515880",
+      "symbol": "515880.SH",
+      "name": "通信ETF国泰",
+      "market": "SH",
+      "type": "etf",
+      "camp": "科技进攻",
+      "tags": [
+        "通信",
+        "通信设备"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 5,
+      "code": "512880",
+      "symbol": "512880.SH",
+      "name": "证券ETF国泰",
+      "market": "SH",
+      "type": "etf",
+      "camp": "周期与资源",
+      "tags": [
+        "证券",
+        "非银金融"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 6,
+      "code": "880964",
+      "symbol": "880964.TDX",
+      "name": "特高压",
+      "market": "TDX",
+      "type": "sector",
+      "camp": "新能源与电网",
+      "tags": [
+        "特高压",
+        "电网设备"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 7,
+      "code": "880490",
+      "symbol": "880490.TDX",
+      "name": "通信设备",
+      "market": "TDX",
+      "type": "sector",
+      "camp": "科技进攻",
+      "tags": [
+        "通信",
+        "通信设备"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 8,
+      "code": "880491",
+      "symbol": "880491.TDX",
+      "name": "半导体",
+      "market": "TDX",
+      "type": "sector",
+      "camp": "科技进攻",
+      "tags": [
+        "半导体",
+        "芯片"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 9,
+      "code": "512760",
+      "symbol": "512760.SH",
+      "name": "芯片ETF国泰",
+      "market": "SH",
+      "type": "etf",
+      "camp": "科技进攻",
+      "tags": [
+        "半导体",
+        "芯片"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 10,
+      "code": "512480",
+      "symbol": "512480.SH",
+      "name": "半导体ETF国联安",
+      "market": "SH",
+      "type": "etf",
+      "camp": "科技进攻",
+      "tags": [
+        "半导体",
+        "芯片"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 11,
+      "code": "880492",
+      "symbol": "880492.TDX",
+      "name": "元器件",
+      "market": "TDX",
+      "type": "sector",
+      "camp": "科技进攻",
+      "tags": [
+        "电子制造",
+        "电子元器件"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 12,
+      "code": "880472",
+      "symbol": "880472.TDX",
+      "name": "证券",
+      "market": "TDX",
+      "type": "sector",
+      "camp": "周期与资源",
+      "tags": [
+        "证券",
+        "非银金融"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 13,
+      "code": "510050",
+      "symbol": "510050.SH",
+      "name": "上证50ETF华夏",
+      "market": "SH",
+      "type": "etf",
+      "camp": "宏观宽基",
+      "tags": [
+        "上证50",
+        "宽基ETF"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 14,
+      "code": "515700",
+      "symbol": "515700.SH",
+      "name": "新能源车ETF平安",
+      "market": "SH",
+      "type": "etf",
+      "camp": "新能源与电网",
+      "tags": [
+        "新能源车",
+        "锂电"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 15,
+      "code": "159994",
+      "symbol": "159994.SZ",
+      "name": "通信ETF银华",
+      "market": "SZ",
+      "type": "etf",
+      "camp": "科技进攻",
+      "tags": [
+        "通信",
+        "5G"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 16,
+      "code": "512000",
+      "symbol": "512000.SH",
+      "name": "券商ETF华宝",
+      "market": "SH",
+      "type": "etf",
+      "camp": "周期与资源",
+      "tags": [
+        "证券",
+        "非银金融"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 17,
+      "code": "880952",
+      "symbol": "880952.TDX",
+      "name": "芯片",
+      "market": "TDX",
+      "type": "sector",
+      "camp": "科技进攻",
+      "tags": [
+        "半导体",
+        "芯片"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 18,
+      "code": "880506",
+      "symbol": "880506.TDX",
+      "name": "5G概念",
+      "market": "TDX",
+      "type": "sector",
+      "camp": "科技进攻",
+      "tags": [
+        "通信",
+        "5G"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 19,
+      "code": "000016",
+      "symbol": "000016.SH",
+      "name": "上证50",
+      "market": "SH",
+      "type": "index",
+      "camp": "宏观宽基",
+      "tags": [
+        "上证50",
+        "大盘基准"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 20,
+      "code": "510300",
+      "symbol": "510300.SH",
+      "name": "沪深300ETF",
+      "market": "SH",
+      "type": "etf",
+      "camp": "宏观宽基",
+      "tags": [
+        "沪深300",
+        "宽基ETF"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 21,
+      "code": "399300",
+      "symbol": "399300.SZ",
+      "name": "沪深300",
+      "market": "SZ",
+      "type": "index",
+      "camp": "宏观宽基",
+      "tags": [
+        "沪深300",
+        "大盘基准"
+      ],
+      "tradable": false
+    },
+    {
+      "rank": 22,
+      "code": "159949",
+      "symbol": "159949.SZ",
+      "name": "创业板50ETF华安",
+      "market": "SZ",
+      "type": "etf",
+      "camp": "宏观宽基",
+      "tags": [
+        "创业板50",
+        "宽基ETF"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 23,
+      "code": "159919",
+      "symbol": "159919.SZ",
+      "name": "沪深300ETF嘉实",
+      "market": "SZ",
+      "type": "etf",
+      "camp": "宏观宽基",
+      "tags": [
+        "沪深300",
+        "宽基ETF"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 24,
+      "code": "603160",
+      "symbol": "603160.SH",
+      "name": "汇顶科技",
+      "market": "SH",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "半导体",
+        "芯片设计"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 25,
+      "code": "603986",
+      "symbol": "603986.SH",
+      "name": "兆易创新",
+      "market": "SH",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "半导体",
+        "存储"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 26,
+      "code": "600276",
+      "symbol": "600276.SH",
+      "name": "恒瑞医药",
+      "market": "SH",
+      "type": "stock",
+      "camp": "消费与防守",
+      "tags": [
+        "医药",
+        "创新药"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 27,
+      "code": "000333",
+      "symbol": "000333.SZ",
+      "name": "美的集团",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "消费与防守",
+      "tags": [
+        "家电",
+        "消费"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 28,
+      "code": "600900",
+      "symbol": "600900.SH",
+      "name": "长江电力",
+      "market": "SH",
+      "type": "stock",
+      "camp": "消费与防守",
+      "tags": [
+        "公用事业",
+        "水电"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 29,
+      "code": "601919",
+      "symbol": "601919.SH",
+      "name": "中远海控",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "航运",
+        "运输周期"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 30,
+      "code": "000538",
+      "symbol": "000538.SZ",
+      "name": "云南白药",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "消费与防守",
+      "tags": [
+        "医药",
+        "中药"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 31,
+      "code": "601225",
+      "symbol": "601225.SH",
+      "name": "陕西煤业",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "煤炭",
+        "能源"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 32,
+      "code": "600036",
+      "symbol": "600036.SH",
+      "name": "招商银行",
+      "market": "SH",
+      "type": "stock",
+      "camp": "消费与防守",
+      "tags": [
+        "银行",
+        "金融"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 33,
+      "code": "002353",
+      "symbol": "002353.SZ",
+      "name": "杰瑞股份",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "油气设备",
+        "高端制造"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 34,
+      "code": "600660",
+      "symbol": "600660.SH",
+      "name": "福耀玻璃",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "汽车零部件",
+        "汽车玻璃"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 35,
+      "code": "600009",
+      "symbol": "600009.SH",
+      "name": "上海机场",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "机场",
+        "出行消费"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 36,
+      "code": "002714",
+      "symbol": "002714.SZ",
+      "name": "牧原股份",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "生猪养殖",
+        "农业周期"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 37,
+      "code": "600885",
+      "symbol": "600885.SH",
+      "name": "宏发股份",
+      "market": "SH",
+      "type": "stock",
+      "camp": "新能源与电网",
+      "tags": [
+        "继电器",
+        "电力设备"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 38,
+      "code": "601100",
+      "symbol": "601100.SH",
+      "name": "恒立液压",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "液压",
+        "高端制造"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 39,
+      "code": "300124",
+      "symbol": "300124.SZ",
+      "name": "汇川技术",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "工业自动化",
+        "高端制造"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 40,
+      "code": "300274",
+      "symbol": "300274.SZ",
+      "name": "阳光电源",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "新能源与电网",
+      "tags": [
+        "光伏",
+        "储能"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 41,
+      "code": "000858",
+      "symbol": "000858.SZ",
+      "name": "五粮液",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "消费与防守",
+      "tags": [
+        "白酒",
+        "消费"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 42,
+      "code": "002460",
+      "symbol": "002460.SZ",
+      "name": "赣锋锂业",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "新能源与电网",
+      "tags": [
+        "锂电",
+        "锂资源"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 43,
+      "code": "603993",
+      "symbol": "603993.SH",
+      "name": "洛阳钼业",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "有色金属",
+        "铜",
+        "钼"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 44,
+      "code": "601899",
+      "symbol": "601899.SH",
+      "name": "紫金矿业",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "有色金属",
+        "铜",
+        "黄金"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 45,
+      "code": "002475",
+      "symbol": "002475.SZ",
+      "name": "立讯精密",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "电子制造",
+        "消费电子"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 46,
+      "code": "601138",
+      "symbol": "601138.SH",
+      "name": "工业富联",
+      "market": "SH",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "电子制造",
+        "算力硬件"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 47,
+      "code": "601318",
+      "symbol": "601318.SH",
+      "name": "中国平安",
+      "market": "SH",
+      "type": "stock",
+      "camp": "消费与防守",
+      "tags": [
+        "保险",
+        "非银金融"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 48,
+      "code": "600406",
+      "symbol": "600406.SH",
+      "name": "国电南瑞",
+      "market": "SH",
+      "type": "stock",
+      "camp": "新能源与电网",
+      "tags": [
+        "特高压",
+        "电网设备"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 49,
+      "code": "601600",
+      "symbol": "601600.SH",
+      "name": "中国铝业",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "有色金属",
+        "铝"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 50,
+      "code": "600089",
+      "symbol": "600089.SH",
+      "name": "特变电工",
+      "market": "SH",
+      "type": "stock",
+      "camp": "新能源与电网",
+      "tags": [
+        "特高压",
+        "电网设备",
+        "光伏"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 51,
+      "code": "300394",
+      "symbol": "300394.SZ",
+      "name": "天孚通信",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "通信",
+        "光器件"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 52,
+      "code": "300750",
+      "symbol": "300750.SZ",
+      "name": "宁德时代",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "新能源与电网",
+      "tags": [
+        "新能源车",
+        "锂电"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 53,
+      "code": "301308",
+      "symbol": "301308.SZ",
+      "name": "江波龙",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "半导体",
+        "存储"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 54,
+      "code": "000338",
+      "symbol": "000338.SZ",
+      "name": "潍柴动力",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "动力系统",
+        "高端制造"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 55,
+      "code": "600522",
+      "symbol": "600522.SH",
+      "name": "中天科技",
+      "market": "SH",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "通信",
+        "光纤光缆"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 56,
+      "code": "002202",
+      "symbol": "002202.SZ",
+      "name": "金风科技",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "新能源与电网",
+      "tags": [
+        "风电",
+        "新能源"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 57,
+      "code": "002156",
+      "symbol": "002156.SZ",
+      "name": "通富微电",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "半导体",
+        "封装测试"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 58,
+      "code": "300136",
+      "symbol": "300136.SZ",
+      "name": "信维通信",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "通信",
+        "射频"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 59,
+      "code": "600487",
+      "symbol": "600487.SH",
+      "name": "亨通光电",
+      "market": "SH",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "通信",
+        "光纤光缆"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 60,
+      "code": "600176",
+      "symbol": "600176.SH",
+      "name": "中国巨石",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "建材",
+        "玻璃纤维"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 61,
+      "code": "002463",
+      "symbol": "002463.SZ",
+      "name": "沪电股份",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "电子制造",
+        "PCB"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 62,
+      "code": "002028",
+      "symbol": "002028.SZ",
+      "name": "思源电气",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "新能源与电网",
+      "tags": [
+        "特高压",
+        "电网设备"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 63,
+      "code": "300308",
+      "symbol": "300308.SZ",
+      "name": "中际旭创",
+      "market": "SZ",
+      "type": "stock",
+      "camp": "科技进攻",
+      "tags": [
+        "通信",
+        "光模块"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 64,
+      "code": "600031",
+      "symbol": "600031.SH",
+      "name": "三一重工",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "工程机械",
+        "高端制造"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 65,
+      "code": "600019",
+      "symbol": "600019.SH",
+      "name": "宝钢股份",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "钢铁",
+        "周期资源"
+      ],
+      "tradable": true
+    },
+    {
+      "rank": 66,
+      "code": "600988",
+      "symbol": "600988.SH",
+      "name": "赤峰黄金",
+      "market": "SH",
+      "type": "stock",
+      "camp": "周期与资源",
+      "tags": [
+        "黄金",
+        "有色金属"
+      ],
+      "tradable": true
+    }
+  ],
+  "camps": [
+    {
+      "name": "宏观宽基",
+      "color": "#52d6c8",
+      "description": "指数与宽基ETF，作为市场环境与风格的观察层。"
+    },
+    {
+      "name": "科技进攻",
+      "color": "#8e9dff",
+      "description": "半导体、通信、电子制造与自动化；仅主题归类。"
+    },
+    {
+      "name": "新能源与电网",
+      "color": "#e5c36a",
+      "description": "新能源车、光伏、风电与电网需进一步区分。"
+    },
+    {
+      "name": "周期与资源",
+      "color": "#be9df9",
+      "description": "资源、制造、运输与券商周期；不表示已进入主升。"
+    },
+    {
+      "name": "消费与防守",
+      "color": "#e5a0b7",
+      "description": "消费、医药、银行保险与公用事业观察；不保证低风险。"
+    }
+  ],
+  "source": "用户提供的两张66标的截图",
+  "quote_status": "not_loaded",
+  "asof": null,
+  "classification": "按业务主题暂分，未核验当前强弱，不代表作者原始分类或投资评级"
+}

@@ -1,0 +1,22 @@
+.venv/
+.cache/
+__pycache__/
+.pytest_cache/
+output/
+data/
+app_data/
+.env
+.env.*
+*.sqlite
+*.sqlite3
+*.db
+
+# Keep this application's UI and explicitly published delivery artifacts.
+!alerts/web.html
+!research/stock_analysis_43.html
+!visualization/dashboard.html
+!visualization/index.template.html
+!desktop-preview/*.png
+!visualization/*.png
+!/downloads/
+!/downloads/ChanQuant-Alerts.zip
